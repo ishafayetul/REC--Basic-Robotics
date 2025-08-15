@@ -11,14 +11,15 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
 // --- Firebase project config ---
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: "AIzaSyCP-JzANiomwA-Q5MB5fnNoz0tUjdNX3Og",
-  authDomain: "japanese-n5-53295.firebaseapp.com",
-  projectId: "japanese-n5-53295",
-  storageBucket: "japanese-n5-53295.firebasestorage.app",
-  messagingSenderId: "176625372154",
-  appId: "1:176625372154:web:66acdaf3304e9ed03e7243",
-  measurementId: "G-JQ03SE08KW"
+  apiKey: "AIzaSyCG9eot9cPAkKDvzoJvfw8AGtqag3u2uWA",
+  authDomain: "basic-robotics.firebaseapp.com",
+  projectId: "basic-robotics",
+  storageBucket: "basic-robotics.firebasestorage.app",
+  messagingSenderId: "638931947308",
+  appId: "1:638931947308:web:881eb4624e4f2a8b03e689",
+  measurementId: "G-5QNJ38XQLE"
 };
 
 const app = initializeApp(firebaseConfig);
