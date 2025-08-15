@@ -10,22 +10,114 @@ import {
   collectionGroup
 } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
-// --- Firebase project config (updated) ---
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+// --- Firebase project config ---
 const firebaseConfig = {
-  apiKey: "AIzaSyCG9eot9cPAkKDvzoJvfw8AGtqag3u2uWA",
-  authDomain: "basic-robotics.firebaseapp.com",
-  projectId: "basic-robotics",
-  storageBucket: "basic-robotics.firebasestorage.app",
-  messagingSenderId: "638931947308",
-  appId: "1:638931947308:web:881eb4624e4f2a8b03e689",
-  measurementId: "G-5QNJ38XQLE"
+  apiKey: "AIzaSyCP-JzANiomwA-Q5MB5fnNoz0tUjdNX3Og",
+  authDomain: "japanese-n5-53295.firebaseapp.com",
+  projectId: "japanese-n5-53295",
+  storageBucket: "japanese-n5-53295.firebasestorage.app",
+  messagingSenderId: "176625372154",
+  appId: "1:176625372154:web:66acdaf3304e9ed03e7243",
+  measurementId: "G-JQ03SE08KW"
 };
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 const provider = new GoogleAuthProvider();
+
+// --- Global full reset: wipe this user's data but keep sign-in ---
+window.__fb_fullReset = async function () {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Not signed in');
+
+  const uid = user.uid;
+  const refs = [];
+
+  // attempts
+  const attemptsSnap = await getDocs(collection(db, 'users', uid, 'attempts'));
+  attemptsSnap.forEach(d => refs.push(d.ref));
+
+  // daily aggregate docs (collect day IDs to clear dailyLeaderboard)
+  const dailySnap = await getDocs(collection(db, 'users', uid, 'daily'));
+  const dayIds = [];
+  dailySnap.forEach(d => { refs.push(d.ref); dayIds.push(d.id); });
+
+  // overall aggregate
+  refs.push(doc(db, 'users', uid, 'overall', 'stats'));
+
+  // taskCompletion/{date}/tasks/*  (delete all discovered status docs)
+  const tcDatesSnap = await getDocs(collection(db, 'users', uid, 'taskCompletion'));
+  for (const dateDoc of tcDatesSnap.docs) {
+    const dateId = dateDoc.id;
+    const tasksSnap = await getDocs(collection(db, 'users', uid, 'taskCompletion', dateId, 'tasks'));
+    tasksSnap.forEach(t => refs.push(t.ref));
+  }
+
+  // EXTRA: force-untick TODAY by deleting any status docs for today's tasks,
+  // even if today's parent 'taskCompletion/{today}' doc wasn't found above.
+  const today = (() => {
+    const n = new Date();
+    const y = n.getFullYear();
+    const m = String(n.getMonth() + 1).padStart(2, '0');
+    const d = String(n.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  })();
+
+  const todaysTasks = await getDocs(collection(db, 'dailyTasks', today, 'tasks'));
+  for (const t of todaysTasks.docs) {
+    refs.push(doc(db, 'users', uid, 'taskCompletion', today, 'tasks', t.id));
+  }
+
+  // leaderboard: overall + each discovered date
+  refs.push(doc(db, 'overallLeaderboard', uid));
+  for (const dateId of dayIds) {
+    refs.push(doc(db, 'dailyLeaderboard', dateId, 'users', uid));
+  }
+
+  // Batched deletes
+  const CHUNK = 450;
+  for (let i = 0; i < refs.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    for (let j = i; j < Math.min(i + CHUNK, refs.length); j++) {
+      batch.delete(refs[j]);
+    }
+    await batch.commit();
+  }
+
+  // Best-effort: remove empty taskCompletion/{date} parent docs
+  try {
+    for (const dateDoc of tcDatesSnap.docs) {
+      await deleteDoc(dateDoc.ref);
+    }
+    // also try to delete parent 'taskCompletion/{today}' if now empty
+    await deleteDoc(doc(db, 'users', uid, 'taskCompletion', today));
+  } catch (e) {
+    console.warn('Non-fatal: could not delete some taskCompletion parent docs', e);
+  }
+
+  // Recreate placeholders so UI listeners have rows
+  const us = await getDoc(doc(db, 'users', uid));
+  const displayName = us.exists() ? (us.data().displayName || 'Anonymous') : 'Anonymous';
+
+  await Promise.all([
+    setDoc(doc(db, 'overallLeaderboard', uid), {
+      uid, displayName, jpEnCorrect: 0, enJpCorrect: 0, tasksCompleted: 0, score: 0,
+      updatedAt: serverTimestamp()
+    }, { merge: true }),
+    setDoc(doc(db, 'dailyLeaderboard', today, 'users', uid), {
+      uid, displayName, jpEnCorrect: 0, enJpCorrect: 0, tasksCompleted: 0, score: 0,
+      updatedAt: serverTimestamp()
+    }, { merge: true }),
+    // Also zero out your per-day aggregate so the score/Tasks UI is consistent
+    setDoc(doc(db, 'users', uid, 'daily', today), {
+      date: today, displayName,
+      jpEnCorrect: 0, enJpCorrect: 0, tasksCompleted: 0, score: 0,
+      updatedAt: serverTimestamp()
+    }, { merge: true }),
+  ]);
+};
+
 
 // --- DOM refs (may be null) ---
 const gate       = document.getElementById('auth-gate');
@@ -37,12 +129,11 @@ const todoFlyout = document.getElementById('todo-flyout');
 const todoTimer  = document.getElementById('todo-timer');
 const todoList   = document.getElementById('todo-list');
 const adminRow   = document.getElementById('admin-row');
-const attendanceNote = document.getElementById('attendance-note');
 const adminInput = document.getElementById('admin-task-input');
 const adminAdd   = document.getElementById('admin-task-add');
 
-const courseLbList  = document.getElementById('course-leaderboard-list');
-const weeklyLbList  = document.getElementById('weekly-leaderboard-list');
+const overallLbList = document.getElementById('overall-leaderboard-list');
+const todaysLbList  = document.getElementById('todays-leaderboard-list');
 
 // --- Helpers ---
 const TASK_BONUS = 10;
@@ -79,6 +170,7 @@ function startCountdown() {
 authBtn?.addEventListener('click', async () => {
   try {
     hideError();
+    console.log('[auth] Trying signInWithPopup…');
     await signInWithPopup(auth, provider);
   } catch (e) {
     console.warn('[auth] Popup sign-in failed:', e?.code, e?.message);
@@ -86,11 +178,12 @@ authBtn?.addEventListener('click', async () => {
   }
 });
 
-let unsubWeeklyLB = null;
+let unsubTodayLB = null;
 let unsubOverallLB = null;
 let unsubTasks = null;
 
 onAuthStateChanged(auth, async (user) => {
+  console.log('[auth] state changed →', user ? 'SIGNED IN' : 'SIGNED OUT', user?.uid || '');
   try {
     if (user) {
       gate?.classList.add('hidden'); if (gate) gate.style.display = 'none';
@@ -115,15 +208,10 @@ onAuthStateChanged(auth, async (user) => {
       if (adminRow) {
         try {
           const adminSnap = await getDoc(doc(db, 'admins', user.uid));
-          const isAdmin = adminSnap.exists();
-          window.__isAdmin = !!isAdmin;
-          adminRow.classList.toggle('hidden', !isAdmin);
+          adminRow.classList.toggle('hidden', !adminSnap.exists());
         } catch {
-          window.__isAdmin = false;
           adminRow.classList.add('hidden');
         }
-      } else {
-        window.__isAdmin = false;
       }
 
       // Admin add-task
@@ -142,8 +230,8 @@ onAuthStateChanged(auth, async (user) => {
       // Start optional UI bits
       startCountdown();
       if (todoList) subscribeTodayTasks(user.uid);
-      if (weeklyLbList) subscribeWeeklyLeaderboard();
-      if (courseLbList) subscribeCourseLeaderboard();
+      if (todaysLbList) subscribeTodaysLeaderboard();
+      if (overallLbList) subscribeOverallLeaderboard();
 
       // Auto-commit any pending session stored locally (from last close)
       try {
@@ -159,7 +247,7 @@ onAuthStateChanged(auth, async (user) => {
       gate?.classList.remove('hidden'); if (gate) gate.style.display = '';
       todoFlyout?.classList.add('hidden'); if (todoFlyout) todoFlyout.style.display = 'none';
 
-      if (unsubWeeklyLB) { unsubWeeklyLB(); unsubWeeklyLB = null; }
+      if (unsubTodayLB) { unsubTodayLB(); unsubTodayLB = null; }
       if (unsubOverallLB) { unsubOverallLB(); unsubOverallLB = null; }
       if (unsubTasks) { unsubTasks(); unsubTasks = null; }
     }
@@ -169,6 +257,7 @@ onAuthStateChanged(auth, async (user) => {
   }
 });
 
+// --- Today’s tasks (To-Do) ---
 // --- Today’s tasks (To-Do) ---
 let unsubTasksDaily = null;
 let unsubTasksStatus = null;
@@ -182,6 +271,7 @@ async function subscribeTodayTasks(uid) {
   let lastStatusMap = {};       // { taskId: { done: boolean } }
 
   function renderTodos() {
+    // Build UI from lastTasks + lastStatusMap
     todoList.innerHTML = '';
     if (lastTasks.length === 0) {
       const li = document.createElement('li');
@@ -231,6 +321,8 @@ async function subscribeTodayTasks(uid) {
   });
 }
 
+
+// Toggle a task + mirror to daily leaderboard
 async function markTask(uid, dkey, taskId, text, done) {
   const statusRef = doc(db, 'users', uid, 'taskCompletion', dkey, 'tasks', taskId);
   const dailyRef  = doc(db, 'users', uid, 'daily', dkey);
@@ -268,6 +360,7 @@ async function markTask(uid, dkey, taskId, text, done) {
       updatedAt: serverTimestamp()
     }, { merge: true });
 
+    // Mirror to today's leaderboard only
     tx.set(lbRef, {
       uid, displayName, jpEnCorrect: jpEn, enJpCorrect: enJp,
       tasksCompleted, score, updatedAt: serverTimestamp()
@@ -277,12 +370,12 @@ async function markTask(uid, dkey, taskId, text, done) {
 
 /* ------------------------------
    Leaderboards
-   - Course (overall) leaderboard = SUM of all dailyLeaderboard/{date}/users per uid
-   - Weekly leaderboard           = SUM of dailyLeaderboard entries that fall within the current week
+   - Overall leaderboard = SUM of all dailyLeaderboard/{date}/users per uid
+   - Today's leaderboard  = dailyLeaderboard/{YYYY-MM-DD}/users
 --------------------------------- */
 
-function subscribeCourseLeaderboard() {
-  if (!courseLbList) return;
+function subscribeOverallLeaderboard() {
+  if (!overallLbList) return;
 
   const cg = collectionGroup(db, 'users'); // 'dailyLeaderboard/{date}/users/{uid}'
   if (unsubOverallLB) unsubOverallLB();
@@ -313,7 +406,7 @@ function subscribeCourseLeaderboard() {
 
     const rows = [...agg.values()].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 50);
 
-    courseLbList.innerHTML = '';
+    overallLbList.innerHTML = '';
     let rank = 1;
     rows.forEach(u => {
       const li = document.createElement('li');
@@ -321,89 +414,40 @@ function subscribeCourseLeaderboard() {
         <div class="lb-row">
           <span class="lb-rank">#${rank++}</span>
           <span class="lb-name">${u.displayName || 'Anonymous'}</span>
-          <span class="lb-part">Correct: <b>${(u.jpEnCorrect||0)+(u.enJpCorrect||0)}</b></span>
+          <span class="lb-part">JP→EN: <b>${u.jpEnCorrect || 0}</b></span>
+          <span class="lb-part">EN→JP: <b>${u.enJpCorrect || 0}</b></span>
           <span class="lb-part">Tasks: <b>${u.tasksCompleted || 0}</b></span>
           <span class="lb-score">${u.score || 0} pts</span>
         </div>`;
-      courseLbList.appendChild(li);
+      overallLbList.appendChild(li);
     });
-  }, (err) => console.error('[course LB] snapshot error:', err));
+  }, (err) => console.error('[overall LB] snapshot error:', err));
 }
 
-// Utility: get ISO week start (Mon) and end (Sun) for a given date
-function getWeekBounds(d = new Date()) {
-  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  // ISO week day: 1 (Mon) .. 7 (Sun); JS getUTCDay(): 0 (Sun) .. 6 (Sat)
-  let day = date.getUTCDay();
-  if (day === 0) day = 7; // treat Sunday as 7
-
-  const start = new Date(date);
-  start.setUTCDate(date.getUTCDate() - day + 1); // Monday
-  const end = new Date(start);
-  end.setUTCDate(start.getUTCDate() + 6); // Sunday
-  return { start, end };
-}
-function ymd(d) {
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-function subscribeWeeklyLeaderboard() {
-  if (!weeklyLbList) return;
-
-  const { start, end } = getWeekBounds(new Date());
-  const startKey = ymd(start);
-  const endKey   = ymd(end);
-
-  const cg = collectionGroup(db, 'users'); // dailyLeaderboard/{YYYY-MM-DD}/users/{uid}
-  if (unsubWeeklyLB) unsubWeeklyLB();
-
-  unsubWeeklyLB = onSnapshot(cg, (ss) => {
-    const agg = new Map();
+// Today's (date-scoped)
+function subscribeTodaysLeaderboard() {
+  if (!todaysLbList) return;
+  const dkey = localDateKey();
+  const qy = query(collection(db, 'dailyLeaderboard', dkey, 'users'), orderBy('score', 'desc'), limit(50));
+  if (unsubTodayLB) unsubTodayLB();
+  unsubTodayLB = onSnapshot(qy, (ss) => {
+    todaysLbList.innerHTML = '';
+    let rank = 1;
     ss.forEach(docSnap => {
-      // Parent path: dailyLeaderboard/{date}/users/{uid}
-      const parentDateId = docSnap.ref.parent.parent.id; // 'YYYY-MM-DD'
-      if (parentDateId < startKey || parentDateId > endKey) return; // outside this week
-
-      const d = docSnap.data() || {};
-      const uid = d.uid || docSnap.id;
-      if (!agg.has(uid)) {
-        agg.set(uid, {
-          uid,
-          displayName: d.displayName || 'Anonymous',
-          jpEnCorrect: 0,
-          enJpCorrect: 0,
-          tasksCompleted: 0,
-          score: 0
-        });
-      }
-      const row = agg.get(uid);
-      row.jpEnCorrect   += d.jpEnCorrect   || 0;
-      row.enJpCorrect   += d.enJpCorrect   || 0;
-      row.tasksCompleted+= d.tasksCompleted|| 0;
-      row.score         += d.score         || 0;
-      if (d.displayName) row.displayName = d.displayName;
-    });
-
-    const rows = [...agg.values()].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 50);
-
-    weeklyLbList.innerHTML = '';
-    let rank = 1;
-    rows.forEach(u => {
+      const u = docSnap.data();
       const li = document.createElement('li');
       li.innerHTML = `
         <div class="lb-row">
           <span class="lb-rank">#${rank++}</span>
           <span class="lb-name">${u.displayName || 'Anonymous'}</span>
-          <span class="lb-part">Correct: <b>${(u.jpEnCorrect||0)+(u.enJpCorrect||0)}</b></span>
+          <span class="lb-part">JP→EN: <b>${u.jpEnCorrect || 0}</b></span>
+          <span class="lb-part">EN→JP: <b>${u.enJpCorrect || 0}</b></span>
           <span class="lb-part">Tasks: <b>${u.tasksCompleted || 0}</b></span>
           <span class="lb-score">${u.score || 0} pts</span>
         </div>`;
-      weeklyLbList.appendChild(li);
+      todaysLbList.appendChild(li);
     });
-  }, (err) => console.error('[weekly LB] snapshot error:', err));
+  }, (err) => console.error('[today LB] snapshot error:', err));
 }
 
 /* ------------------------------
@@ -412,14 +456,14 @@ function subscribeWeeklyLeaderboard() {
 
 /**
  * Commit a buffered session to Firestore.
- * @param {{deckName:string, mode:string, correct:number, wrong:number, skipped:number, total:number, jpEnCorrect:number, enJpCorrect:number}} payload
+ * @param {{deckName:string, mode:'jp-en'|'en-jp', correct:number, wrong:number, skipped:number, total:number, jpEnCorrect:number, enJpCorrect:number}} payload
  */
 window.__fb_commitSession = async function (payload) {
   const user = auth.currentUser;
   if (!user) throw new Error('Not signed in');
   const {
-    deckName = 'Unknown Set',
-    mode = 'mcq',
+    deckName = 'Unknown Deck',
+    mode = 'jp-en',
     correct = 0, wrong = 0, skipped = 0, total = 0,
     jpEnCorrect = 0, enJpCorrect = 0
   } = payload || {};
@@ -434,19 +478,23 @@ window.__fb_commitSession = async function (payload) {
   const usnap = await getDoc(uref);
   const displayName = usnap.exists() ? (usnap.data().displayName || 'Anonymous') : 'Anonymous';
 
+  // Make sure daily & lb docs exist before increment
   await Promise.all([
     setDoc(dailyRef, { date: dkey, uid: user.uid, displayName }, { merge: true }),
     setDoc(lbDaily,  { uid: user.uid, displayName }, { merge: true }),
   ]);
 
+  // Batch: attempt + daily increments + lb increments
   const batch = writeBatch(db);
 
+  // Attempt doc
   const attemptDoc = doc(attemptsCol);
   batch.set(attemptDoc, {
     deckName, mode, correct, wrong, skipped, total,
     createdAt: Date.now(), createdAtServer: serverTimestamp()
   });
 
+  // Increments for daily aggregate + mirror on leaderboard
   const incsDaily = {
     updatedAt: serverTimestamp(),
     jpEnCorrect: increment(jpEnCorrect),
@@ -466,6 +514,10 @@ window.__fb_commitSession = async function (payload) {
   await batch.commit();
 };
 
+/**
+ * If a pending session is in localStorage, commit it once the user is signed in.
+ * Clears the pending session after success.
+ */
 async function __fb_commitLocalPendingSession() {
   const raw = localStorage.getItem('pendingSession');
   if (!raw) return;
@@ -486,7 +538,7 @@ async function __fb_commitLocalPendingSession() {
 
 // --- Progress: fetch recent attempts for the signed-in user ---
 window.__fb_fetchAttempts = async function (limitN = 20) {
-  const user = getAuth().currentUser;
+  const user = getAuth().currentUser; // reuse the same auth from firebase.js
   if (!user) return [];
   const db = getFirestore();
 
@@ -497,63 +549,12 @@ window.__fb_fetchAttempts = async function (limitN = 20) {
   const list = [];
   snap.forEach(docSnap => {
     const d = docSnap.data() || {};
+    // prefer client timestamp; fall back to server
     const ts = d.createdAt || (d.createdAtServer?.toMillis ? d.createdAtServer.toMillis() : Date.now());
     list.push({ id: docSnap.id, ...d, createdAt: ts });
   });
   return list;
 };
 
-// Expose sign out (optional if you want to add a sign-out button later)
+// Expose sign out
 window.__signOut = () => signOut(auth);
-
-
-// ---------------- Attendance API ----------------
-// Data model:
-// attendance/{YYYY-MM-DD}/students/{uid} => { present: boolean, markedBy: uid, markedAt: serverTimestamp(), displayName }
-
-/** List all students (users) */
-window.__fb_listStudents = async function () {
-  const qy = query(collection(db, 'users'), orderBy('displayName'));
-  const snap = await getDocs(qy);
-  const rows = [];
-  snap.forEach(d => rows.push({ uid: d.id, ...(d.data() || {}) }));
-  return rows;
-};
-
-/** Get attendance map for a given date key 'YYYY-MM-DD' */
-window.__fb_getAttendance = async function (dateKey) {
-  const colRef = collection(db, 'attendance', dateKey, 'students');
-  const snap = await getDocs(colRef);
-  const map = {};
-  snap.forEach(d => map[d.id] = d.data());
-  return map; // { uid: {present: true/false, displayName, markedBy, markedAt} }
-};
-
-/** Set attendance for a single student */
-window.__fb_setAttendance = async function (dateKey, uid, present, displayName) {
-  const user = auth.currentUser;
-  if (!user) throw new Error('Not signed in');
-  await setDoc(doc(db, 'attendance', dateKey, 'students', uid), {
-    present: !!present,
-    displayName: displayName || null,
-    markedBy: user.uid,
-    markedAt: serverTimestamp()
-  }, { merge: true });
-};
-
-/** Bulk save attendance changes: records = [{uid, present, displayName}] */
-window.__fb_saveAttendanceBulk = async function (dateKey, records) {
-  const user = auth.currentUser;
-  if (!user) throw new Error('Not signed in');
-  const batch = writeBatch(db);
-  records.forEach(r => {
-    const ref = doc(db, 'attendance', dateKey, 'students', r.uid);
-    batch.set(ref, {
-      present: !!r.present,
-      displayName: r.displayName || null,
-      markedBy: user.uid,
-      markedAt: serverTimestamp()
-    }, { merge: true });
-  });
-  await batch.commit();
-};
