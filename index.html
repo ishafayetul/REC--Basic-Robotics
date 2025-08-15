@@ -328,6 +328,21 @@
           </div>
         </section>
 
+        <section id="admin-resetdb-section" class="hidden admin-only">
+          <h2>🧹 Admin: Reset Database</h2>
+          <div class="card">
+            <p class="muted">
+              This will permanently delete <b>all course data</b> (tasks, submissions, exams, leaderboards, attendance)
+              and <b>all non‑admin user profiles</b>. Admin profiles are kept but cleared. You will be signed out after the wipe.
+            </p>
+            <div class="attendance-controls">
+              <input id="resetdb-confirm" placeholder='Type: I UNDERSTAND' style="min-width:260px;">
+              <button id="resetdb-run" style="background:#dc2626">⚠️ Wipe Everything</button>
+              <span id="resetdb-status" class="muted"></span>
+            </div>
+          </div>
+        </section>
+
         <!-- Mistakes -->
         <section id="mistakes-section" class="hidden">
           <h2>Frequent Mistakes</h2>

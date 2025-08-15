@@ -971,8 +971,6 @@ window.__fb_adminDeleteUser = async function(uid){
 // =============================
 // ADMIN: Full Database Wipe
 // =============================
-// This removes ALL course data across the app and sets all users to approved:false.
-// It preserves the 'admins/*' docs and the 'users/*' profile docs.
 window.__fb_adminWipeAll = async function(){
   if (!window.__isAdmin) throw new Error("Admin only");
 
@@ -984,59 +982,71 @@ window.__fb_adminWipeAll = async function(){
     await batch.commit();
   }
 
-  // 1) tasks/*/items/* and submissions
-  const weeks = await getDocs(collection(db, 'tasks'));
-  for (const wkDoc of weeks.docs) {
-    const items = await getDocs(collection(db, 'tasks', wkDoc.id, 'items'));
-    for (const it of items.docs) {
-      await deleteAllDocs(collection(db, 'tasks', wkDoc.id, 'items', it.id, 'submissions'));
-      await deleteDoc(it.ref);
+  // 1) TASKS and submissions
+  {
+    const weeks = await getDocs(collection(db, 'tasks'));
+    for (const wk of weeks.docs) {
+      const items = await getDocs(collection(db, 'tasks', wk.id, 'items'));
+      for (const it of items.docs) {
+        await deleteAllDocs(collection(db, 'tasks', wk.id, 'items', it.id, 'submissions'));
+        await deleteDoc(it.ref);
+      }
+      await deleteDoc(wk.ref);
     }
-    await deleteDoc(wkDoc.ref);
   }
 
-  // 2) examScores/*/users/*
-  const exWeeks = await getDocs(collection(db, 'examScores'));
-  for (const wkDoc of exWeeks.docs) {
-    await deleteAllDocs(collection(db, 'examScores', wkDoc.id, 'users'));
-    await deleteDoc(wkDoc.ref);
+  // 2) EXAM SCORES
+  {
+    const weeks = await getDocs(collection(db, 'examScores'));
+    for (const wk of weeks.docs) {
+      await deleteAllDocs(collection(db, 'examScores', wk.id, 'users'));
+      await deleteDoc(wk.ref);
+    }
   }
 
-  // 3) dailyLeaderboard/*/users/*
-  const daysLB = await getDocs(collection(db, 'dailyLeaderboard'));
-  for (const dayDoc of daysLB.docs) {
-    await deleteAllDocs(collection(db, 'dailyLeaderboard', dayDoc.id, 'users'));
-    await deleteDoc(dayDoc.ref);
+  // 3) DAILY LEADERBOARD
+  {
+    const days = await getDocs(collection(db, 'dailyLeaderboard'));
+    for (const d of days.docs) {
+      await deleteAllDocs(collection(db, 'dailyLeaderboard', d.id, 'users'));
+      await deleteDoc(d.ref);
+    }
   }
 
-  // 4) attendance/*/students/*
-  const daysAtt = await getDocs(collection(db, 'attendance'));
-  for (const dayDoc of daysAtt.docs) {
-    await deleteAllDocs(collection(db, 'attendance', dayDoc.id, 'students'));
-    await deleteDoc(dayDoc.ref);
+  // 4) ATTENDANCE
+  {
+    const days = await getDocs(collection(db, 'attendance'));
+    for (const d of days.docs) {
+      await deleteAllDocs(collection(db, 'attendance', d.id, 'students'));
+      await deleteDoc(d.ref);
+    }
   }
 
-  // 5) delete all users except admins
+  // 5) USERS: delete non-admins; keep admins but clear their subcollections
   const adminsSnap = await getDocs(collection(db, 'admins'));
   const adminIds = new Set(); adminsSnap.forEach(a => adminIds.add(a.id));
 
   const usersSnap = await getDocs(collection(db, 'users'));
   for (const u of usersSnap.docs) {
     const uid = u.id;
-    if (adminIds.has(uid)) {
-      // Clean admin's subcollections but keep doc
-      await deleteAllDocs(collection(db, 'users', uid, 'attempts'));
-      await deleteAllDocs(collection(db, 'users', uid, 'daily'));
-      continue;
-    }
-    // remove subcollections then delete user doc
+    // clear subcollections
     await deleteAllDocs(collection(db, 'users', uid, 'attempts'));
     await deleteAllDocs(collection(db, 'users', uid, 'daily'));
+
+    if (adminIds.has(uid)) {
+      // keep admin profile doc
+      continue;
+    }
+    // delete student profile doc
     await deleteDoc(doc(db, 'users', uid));
   }
 
+  // 6) Sign out current admin so they re‑enter cleanly
+  try { await signOut(auth); } catch(e){ console.warn("Sign-out after wipe failed", e); }
+
   return true;
 };
+
 
 
 // ——— expose ISO week helper for the rest of the app ———
