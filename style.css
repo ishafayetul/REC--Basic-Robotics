@@ -54,6 +54,7 @@ body {
 h1 { margin: 0 0 8px; font-size: 28px; }
 h2 { margin: 20px 0 12px; font-size: 22px; }
 h3 { margin: 0 0 10px; font-size: 18px; }
+h4 { margin: 12px 0 8px; font-size: 16px; }
 .muted { color: var(--muted); }
 .error { color: #b00020; margin-top: 10px; }
 
@@ -83,7 +84,7 @@ h3 { margin: 0 0 10px; font-size: 18px; }
 .sidebar button:active{ transform: translateY(1px); }
 
 /* =========================
-   Generic buttons
+   Generic controls
    ========================= */
 button{
   padding: 10px 18px;
@@ -99,15 +100,47 @@ button{
 button:hover{ background: var(--primary-hover); }
 button:active{ transform: translateY(1px); }
 button:disabled { opacity: .6; cursor: not-allowed; }
+input, textarea, select{
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  font-size: 14px;
+  outline: none;
+}
+textarea{ min-height: 90px; resize: vertical; }
 
 /* =========================
-   Practice actions
+   Cards / Tables
+   ========================= */
+.card{
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: var(--shadow);
+}
+.table-wrap{ overflow:auto; }
+.progress-table{
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.progress-table th, .progress-table td{
+  font-size: 14px;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 10px;
+  text-align: left;
+}
+.progress-table thead th{ background:#f3f4f6; }
+
+/* =========================
+   Practice
    ========================= */
 .practice-actions{ display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
-
-/* =========================
-   Practice set list / options
-   ========================= */
 #practice-buttons{ display:flex; flex-wrap:wrap; gap:10px; }
 #practice-buttons button{ border-radius: 999px; padding: 8px 14px; }
 
@@ -125,6 +158,27 @@ button:disabled { opacity: .6; cursor: not-allowed; }
 #options li:hover{ background:#f2f4f7; }
 .correct{ background: var(--success) !important; }
 .wrong{ background: var(--danger) !important; }
+
+/* progress bar */
+.deck-progress{
+  margin: 8px 0 12px;
+  background: #eef2ff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.deck-progress-bar{
+  height: 10px;
+  width: 0%;
+  background: var(--primary);
+  transition: width .25s ease;
+}
+.deck-progress-text{
+  padding: 8px 10px;
+  font-size: 14px;
+  color: #111;
+}
 
 /* =========================
    Leaderboards
@@ -154,29 +208,6 @@ button:disabled { opacity: .6; cursor: not-allowed; }
   grid-template-columns: repeat(3, minmax(0,1fr));
   gap:12px;
 }
-.card{
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 12px;
-  box-shadow: var(--shadow);
-}
-.table-wrap{ overflow:auto; }
-.progress-table{
-  width: 100%;
-  border-collapse: collapse;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  overflow: hidden;
-}
-.progress-table th, .progress-table td{
-  font-size: 14px;
-  border-bottom: 1px solid var(--border);
-  padding: 8px 10px;
-  text-align: left;
-}
-.progress-table thead th{ background:#f3f4f6; }
 .delta-up{ color: var(--green); font-weight: 700; }
 .delta-down{ color: var(--red); font-weight: 700; }
 
@@ -199,7 +230,7 @@ button:disabled { opacity: .6; cursor: not-allowed; }
 }
 
 /* =========================
-   To-Do flyout (bottom-right)
+   Weekly Tasks flyout
    ========================= */
 .todo-flyout{
   position: fixed;
@@ -228,12 +259,40 @@ button:disabled { opacity: .6; cursor: not-allowed; }
 .admin-row input{ flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:8px; }
 
 /* =========================
+   Tasks (admin + student)
+   ========================= */
+.task-form{
+  display:grid;
+  grid-template-columns: repeat(2, minmax(0,1fr));
+  gap:10px;
+}
+.task-form textarea{ grid-column: 1 / -1; }
+.task-list{ display:flex; flex-direction:column; gap:10px; }
+.task-item{
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--card);
+}
+.task-item a{ color: var(--primary); text-decoration: none; }
+.task-item a:hover{ text-decoration: underline; }
+
+/* =========================
+   Attendance
+   ========================= */
+.attendance-controls{
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;
+}
+.attendance-actions{ margin-top:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+#attendance-classno { padding: 8px; border: 1px solid var(--border); border-radius: 8px; }
+.attendance-controls button.active { background: var(--primary-hover); }
+
+/* =========================
    Responsive
    ========================= */
 @media (max-width: 900px){
   .todo-flyout{ position: static; width:100%; margin:10px 0 0; }
 }
-
 @media (max-width: 768px){
   .sidebar{
     position: static;
@@ -249,8 +308,8 @@ button:disabled { opacity: .6; cursor: not-allowed; }
   h2{ font-size: 20px; }
   #options li{ font-size: 16px; }
   .progress-grid{ grid-template-columns: 1fr; }
+  .task-form{ grid-template-columns: 1fr; }
 }
-
 @media (max-width: 480px){
   .sidebar{ flex-wrap: wrap; gap: 6px; }
   .sidebar button{ min-width: 120px; font-size: 13px; padding: 8px; }
@@ -261,36 +320,4 @@ button:disabled { opacity: .6; cursor: not-allowed; }
 /* Reserve room so content isn't covered by the fixed flyout on desktop */
 @media (min-width: 769px){
   .main-content{ padding-bottom: 360px; }
-}
-
-/* Practice progress */
-.deck-progress{
-  margin: 8px 0 12px;
-  background: #eef2ff;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-  box-shadow: var(--shadow);
-}
-.deck-progress-bar{
-  height: 10px;
-  width: 0%;
-  background: var(--primary);
-  transition: width .25s ease;
-}
-.deck-progress-text{
-  padding: 8px 10px;
-  font-size: 14px;
-  color: #111;
-}
-
-
-/* Attendance */
-.attendance-controls{
-  display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;
-}
-.attendance-actions{ margin-top:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-#attendance-classno { padding: 8px; border: 1px solid var(--border); border-radius: 8px; }
-.attendance-controls button.active {
-  background: var(--primary-hover);
 }

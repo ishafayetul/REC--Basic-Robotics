@@ -18,30 +18,42 @@
     </div>
   </div>
 
-  <!-- App (hidden until signed in) -->
+  <!-- Waiting-for-approval gate -->
+  <div id="approval-gate" class="auth-gate hidden">
+    <div class="auth-card">
+      <h1>⏳ Waiting for approval</h1>
+      <p class="muted">Your account was created, but access isn’t granted yet. Please wait for the teacher to approve you.</p>
+      <p class="muted" style="margin-top:6px;">You can close this tab and come back later.</p>
+    </div>
+  </div>
+
+  <!-- App (hidden until signed in AND approved or admin) -->
   <div id="app-root" class="layout hidden">
     <nav class="sidebar">
       <h2>📘 Menu</h2>
       <button onclick="showSection('practice-select')">📝 Practice</button>
       <button onclick="showSection('lectures-section')">📖 Lectures</button>
+      <button onclick="showSection('tasks-section')">🗂️ Tasks</button>
       <button onclick="showSection('progress-section')">📈 Progress</button>
       <button onclick="showSection('course-leaderboard-section')">🏆 Course Leaderboard</button>
       <button onclick="showSection('weekly-leaderboard-section')">📅 Weekly Leaderboard</button>
       <button onclick="showSection('attendance-section')">🗒️ Attendance</button>
+      <button onclick="showSection('admin-approvals-section')">✅ Admin: Approvals</button>
+      <button onclick="showSection('admin-manage-section')">🧑‍🏫 Admin: Manage Students</button>
       <button onclick="showSection('simulation-section')">🔧 Simulation</button>
-      <button onclick="showSection('mistakes-section')">❗ Mistakes</button>
+      <button onclick="__signOut()">🚪 Sign out</button>
     </nav>
 
-    <!-- Tasks flyout (kept as-is; useful for teachers to assign tasks) -->
+    <!-- Weekly Tasks flyout -->
     <div id="todo-flyout" class="todo-flyout hidden">
       <div class="todo-head">
-        <span>Weekly Task</span>
+        <span>Weekly Tasks</span>
         <span id="todo-timer" class="todo-timer">00:00:00</span>
       </div>
       <ul id="todo-list" class="todo-list"></ul>
-      <!-- Only visible to admins (firebase.js toggles this row) -->
+      <!-- Teacher-only quick add (legacy placeholder – optional) -->
       <div id="admin-row" class="admin-row hidden">
-        <input id="admin-task-input" placeholder="Add a task for everyone today…" />
+        <input id="admin-task-input" placeholder="(Legacy) quick note for today…" />
         <button id="admin-task-add">Add</button>
       </div>
     </div>
@@ -66,7 +78,7 @@
 
         <!-- Practice Runner -->
         <section id="practice" class="hidden">
-          <div id="deck-progress" class="deck-progress">
+          <div class="deck-progress">
             <div class="deck-progress-bar" id="deck-progress-bar"></div>
             <div class="deck-progress-text" id="deck-progress-text">0 / 0 (0%)</div>
           </div>
@@ -76,7 +88,7 @@
           <div class="practice-actions">
             <button onclick="skipQuestion()">Skip</button>
           </div>
-          <div id="extra-info" style="margin-top: 10px; font-size: 16px;"></div>
+          <div class="muted" id="resume-hint" style="margin-top:6px;"></div>
         </section>
 
         <!-- Lectures -->
@@ -84,6 +96,46 @@
           <h2>Lectures</h2>
           <p id="lectures-status" class="muted" style="margin:8px 0"></p>
           <div id="lectures-list"></div>
+        </section>
+
+        <!-- TASKS (Admin + Student) -->
+        <section id="tasks-section" class="hidden">
+          <h2>🗂️ Tasks</h2>
+
+          <!-- Admin panel -->
+          <div id="tasks-admin" class="card hidden">
+            <h3>Assign / Edit Weekly Tasks (current ISO week)</h3>
+            <div class="task-form">
+              <input id="task-title" placeholder="Title">
+              <input id="task-link" placeholder="Reference file/link (optional)">
+              <input id="task-due" type="datetime-local">
+              <input id="task-max" type="number" min="0" step="1" placeholder="Score (max)">
+              <textarea id="task-desc" placeholder="Description"></textarea>
+              <button id="task-create">+ Create Task</button>
+            </div>
+
+            <div style="margin-top:8px;">
+              <h4>Existing Tasks (this week)</h4>
+              <div id="task-admin-list" class="task-list"></div>
+            </div>
+
+            <div class="card" style="margin-top:12px;">
+              <h3>Exam Score (this week)</h3>
+              <div class="task-form">
+                <input id="exam-uid" placeholder="Student UID">
+                <input id="exam-score" type="number" min="0" step="1" placeholder="Exam Score">
+                <button id="exam-save">Save Exam Score</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Student view -->
+          <div id="tasks-student" class="card hidden">
+            <h3>Your Tasks (this week)</h3>
+            <div id="task-student-list" class="task-list">
+              <!-- Each task renders with: title, due, link (optional), and an input + submit button for your submission URL -->
+            </div>
+          </div>
         </section>
 
         <!-- Progress -->
@@ -117,9 +169,21 @@
               <tbody></tbody>
             </table>
           </div>
+
+          <h3 style="margin-top:18px;">Task & Attendance Overview (this week)</h3>
+          <div class="table-wrap">
+            <table id="overview-table" class="progress-table">
+              <thead>
+                <tr>
+                  <th>Type</th><th>Title/Date</th><th>Status/Score</th>
+                </tr>
+              </thead>
+              <tbody id="overview-body"></tbody>
+            </table>
+          </div>
         </section>
 
-        <!-- Course Leaderboard (overall) -->
+        <!-- Course Leaderboard -->
         <section id="course-leaderboard-section" class="hidden">
           <h2>🏆 Course Leaderboard</h2>
           <ul id="course-leaderboard-list"></ul>
@@ -144,16 +208,14 @@
         <section id="attendance-section" class="hidden">
           <h2>🗒️ Attendance</h2>
 
-          <!-- ADMIN-ONLY AREA (hidden for students) -->
+          <!-- ADMIN-ONLY AREA -->
           <div id="attendance-admin-area">
-            <!-- Tab Buttons -->
             <div class="attendance-controls">
               <button id="att-tab-take" class="active">Take Attendance</button>
               <button id="att-tab-history">Attendance History</button>
               <span id="attendance-status" class="muted"></span>
             </div>
 
-            <!-- TAKE ATTENDANCE PANE -->
             <div id="att-pane-take">
               <div id="attendance-admin-controls" class="attendance-controls">
                 <label for="attendance-date"><b>Date</b></label>
@@ -180,7 +242,7 @@
                 </table>
               </div>
 
-              <div id="attendance-admin-actions" class="attendance-actions">
+              <div class="attendance-actions">
                 <button id="attendance-mark-all">Mark All Present</button>
                 <button id="attendance-clear-all">Clear All</button>
                 <button id="attendance-save">Save Changes</button>
@@ -189,7 +251,6 @@
               <p class="muted" id="attendance-note"></p>
             </div>
 
-            <!-- ATTENDANCE HISTORY (ADMIN READ-ONLY FOR ANY DATE) -->
             <div id="att-pane-history" class="hidden">
               <div class="attendance-controls">
                 <label for="att-hist-date"><b>Date</b></label>
@@ -219,19 +280,42 @@
           </div>
         </section>
 
+        <!-- Admin Approvals -->
+        <section id="admin-approvals-section" class="hidden">
+          <h2>✅ Admin: Approvals</h2>
+          <div id="approvals-panel" class="card">
+            <p class="muted">Approve students so they can access the site.</p>
+            <div id="approvals-list" class="task-list"></div>
+          </div>
+        </section>
 
-
-                <!-- Mistakes -->
-                <section id="mistakes-section" class="hidden">
-                  <h2>Frequent Mistakes</h2>
-                  <button onclick="startMistakePractice()">Practice Mistakes</button>
-                  <button onclick="clearMistakes()">Clear Mistakes</button>
-                </section>
-              </main>
+        <!-- Admin Manage Students (Reset/Delete) -->
+        <section id="admin-manage-section" class="hidden">
+          <h2>🧑‍🏫 Admin: Manage Students</h2>
+          <div class="card">
+            <p class="muted">Reset clears a student’s attempts/leaderboard & sets them unapproved. Delete removes the user profile (Firestore). Auth account deletion isn’t done here.</p>
+            <div style="margin:10px 0;">
+              <button id="admin-refresh-students">🔄 Refresh List</button>
+            </div>
+            <div class="table-wrap">
+              <table class="progress-table">
+                <thead><tr><th>Display Name</th><th>UID</th><th>Actions</th></tr></thead>
+                <tbody id="admin-students-tbody"></tbody>
+              </table>
             </div>
           </div>
+        </section>
 
-  <!-- IMPORTANT: Firebase before your app logic -->
+        <!-- Mistakes -->
+        <section id="mistakes-section" class="hidden">
+          <h2>Frequent Mistakes</h2>
+          <button onclick="startMistakePractice()">Practice Mistakes</button>
+          <button onclick="clearMistakes()">Clear Mistakes</button>
+        </section>
+      </main>
+    </div>
+  </div>
+
   <script type="module" src="firebase.js"></script>
   <script src="script.js"></script>
 </body>
