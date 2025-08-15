@@ -80,6 +80,9 @@ function startCountdown() {
   setInterval(tick, 1000);
 }
 
+// Hide the timer UI (also not calling startCountdown anymore)
+if (todoTimer) todoTimer.style.display = 'none';
+
 // --- Sign-in ---
 authBtn?.addEventListener('click', async () => {
   try {
@@ -141,8 +144,8 @@ onAuthStateChanged(auth, async (user) => {
       if (adminRow) adminRow.classList.toggle('hidden', !isAdmin);
       try { window.__onAdminStateChanged && window.__onAdminStateChanged(window.__isAdmin); } catch {}
 
-      // UI helpers
-      startCountdown();
+      // (Removed startCountdown(); timer is hidden and not running)
+
       subscribeWeeklyTaskFlyout(user.uid);
       if (weeklyLbList) subscribeWeeklyLeaderboard();
       if (courseLbList) subscribeCourseLeaderboard();
@@ -258,6 +261,37 @@ window.__fb_setExamScore = async function (weekKey, uid, score) {
     score: Number(score||0),
     updatedAt: serverTimestamp()
   }, { merge: true });
+};
+
+// NEW: list submissions for a task (admin)
+window.__fb_listSubmissions = async function(weekKey, taskId){
+  const wk = _wk(weekKey);
+  const subsSnap = await getDocs(collection(db,'tasks', wk, 'items', taskId, 'submissions'));
+  const out = [];
+  const uids = [];
+  subsSnap.forEach(s => { uids.push(s.id); out.push({ uid: s.id, ...(s.data()||{}) }); });
+  // attach displayName
+  for (let i=0;i<uids.length;i++){
+    try {
+      const us = await getDoc(doc(db,'users', uids[i]));
+      if (us.exists()) out[i].displayName = us.data().displayName || 'Anonymous';
+    } catch {}
+  }
+  return out;
+};
+
+// NEW: delete a task (and its submissions)
+window.__fb_deleteTask = async function(weekKey, taskId){
+  const wk = _wk(weekKey);
+  // delete all submissions
+  const subCol = collection(db,'tasks', wk, 'items', taskId, 'submissions');
+  const subSnap = await getDocs(subCol);
+  const batch = writeBatch(db);
+  subSnap.forEach(s => batch.delete(s.ref));
+  await batch.commit();
+  // delete the task doc
+  await deleteDoc(doc(db,'tasks', wk, 'items', taskId));
+  return true;
 };
 
 // Student flyout shows current week tasks

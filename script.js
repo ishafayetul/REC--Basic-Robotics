@@ -1,4 +1,4 @@
-// script.js — UI glue for Practice, Lectures, Progress, Approvals, Attendance, Tasks
+// script.js — UI glue for Practice, Lectures, Progress, Approvals, Attendance, Tasks, Submissions
 // All Firebase operations are done via helpers exposed by firebase.js (window.__fb_*).
 
 /* =========================
@@ -41,11 +41,16 @@ function shuffleArray(arr) { for (let i = arr.length - 1; i > 0; i--) { const j 
    Lifecycle
    ========================= */
 window.onload = () => {
+  // Hide the countdown badge if present
+  const timer = $("todo-timer"); if (timer) timer.style.display = "none";
+
   loadPracticeManifest();
   loadLecturesManifest();
   renderProgress();
   wireApprovals();
   wireTasks();
+  wireManageStudents();
+  wireAdminSubmissions(); // new admin-only section
   initAttendance(); // sets up attendance tabs + handlers
   updateScore();
 };
@@ -55,7 +60,11 @@ window.__initAfterLogin = () => {
   // Refresh admin-dependent UIs
   wireApprovals();
   wireTasks();
+  wireManageStudents();
+  wireAdminSubmissions();
   renderProgress();
+  // Hide admin-only nav items for students
+  applyAdminNavVisibility(!!window.__isAdmin);
 };
 
 // Persist pending session safely on leave (firebase.js will try to commit next launch)
@@ -84,11 +93,44 @@ function showSection(id) {
   if (id === "tasks-section") refreshTasksUI();
   if (id === "progress-section") renderProgress();
   if (id === "attendance-section") {
-    // attendance view adjusts inside initAttendance()
     if (typeof window.__att_refreshOnShow === 'function') window.__att_refreshOnShow();
+  }
+  if (id === "admin-submissions-section") {
+    if (typeof window.__subs_refreshOnShow === 'function') window.__subs_refreshOnShow();
   }
 }
 window.showSection = showSection;
+
+/* =========================
+   Hide/Show admin items in sidebar
+   ========================= */
+function applyAdminNavVisibility(isAdmin) {
+  const sidebar = document.querySelector("nav.sidebar");
+  if (!sidebar) return;
+  // Buttons are defined in HTML; we'll hide admin ones for students
+  // Admin buttons have these targets in your HTML. 
+  const adminBtns = [
+    "admin-approvals-section",
+    "admin-manage-section",
+    "admin-submissions-section" // injected button id below
+  ];
+  // Inject "Admin: View Submissions" button when admin
+  let subsBtn = sidebar.querySelector('button[data-nav="admin-submissions-section"]');
+  if (isAdmin && !subsBtn) {
+    subsBtn = document.createElement("button");
+    subsBtn.dataset.nav = "admin-submissions-section";
+    subsBtn.textContent = "📥 Admin: View Submissions";
+    subsBtn.onclick = () => showSection("admin-submissions-section");
+    sidebar.insertBefore(subsBtn, sidebar.querySelector('button[onclick*="simulation-section"]') || sidebar.lastElementChild);
+  }
+  // Toggle visibility
+  adminBtns.forEach(id => {
+    const btn = id === "admin-submissions-section"
+      ? sidebar.querySelector('button[data-nav="admin-submissions-section"]')
+      : sidebar.querySelector(`button[onclick*="${id}"]`);
+    if (btn) btn.style.display = isAdmin ? "" : "none";
+  });
+}
 
 /* =========================
    PRACTICE (MCQ)
@@ -181,8 +223,7 @@ function showQuestion() {
   optionsList.innerHTML = "";
 
   const shuffled = q.options.slice();
-  // Requirement said no need to shuffle order; comment out the next line to keep original order.
-  // shuffleArray(shuffled);
+  // No shuffling required by spec.
 
   const correct = q.options[q.correctIndex];
   shuffled.forEach((opt) => {
@@ -471,11 +512,10 @@ function wireApprovals() {
         listEl.appendChild(row);
       });
     } catch (e) {
-        console.error(e);
-        const msg = (e && e.message) ? e.message : 'Failed to load.';
-        listEl.innerHTML = `<div class="muted">${msg}</div>`;
-      }
-
+      console.error(e);
+      const msg = (e && e.message) ? e.message : 'Failed to load.';
+      listEl.innerHTML = `<div class="muted">${msg}</div>`;
+    }
   }
 
   // auto-refresh whenever section is shown
@@ -520,7 +560,7 @@ function wireTasks() {
     if (!adminList) return;
     adminList.innerHTML = '<div class="muted">Loading…</div>';
     try {
-      const wk = window.__getISOWeek ? window.__getISOWeek() : null; // not exposed; we’ll just call API that assumes current week
+      const wk = window.__getISOWeek ? window.__getISOWeek() : null;
       const tasks = await (window.__fb_listTasks ? window.__fb_listTasks(wk || (void 0)) : []);
       adminList.innerHTML = '';
       if (!tasks.length) {
@@ -542,7 +582,14 @@ function wireTasks() {
             <input data-edit="link"    placeholder="Edit link" value="${t.link || ''}">
             <input data-edit="due"     type="datetime-local" value="">
             <input data-edit="max"     type="number" min="0" step="1" placeholder="Score max" value="${t.scoreMax ?? ''}">
+          </div>
+          <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
+            <textarea data-edit="desc" placeholder="Edit description">${t.description || ''}</textarea>
+          </div>
+          <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
             <button data-action="save">Save</button>
+            <button data-action="view">View Submissions</button>
+            <button data-action="delete" style="background:#dc2626">Delete</button>
           </div>
         `;
         // fill datetime-local if t.dueAt is an ISO/timestamp
@@ -553,10 +600,12 @@ function wireTasks() {
             row.querySelector('input[data-edit="due"]').value = iso;
           }
         } catch {}
+
         row.querySelector('[data-action="save"]').onclick = async () => {
           const patch = {
             title: row.querySelector('input[data-edit="title"]').value.trim(),
             link: row.querySelector('input[data-edit="link"]').value.trim(),
+            description: row.querySelector('textarea[data-edit="desc"]').value.trim()
           };
           const dueVal = row.querySelector('input[data-edit="due"]').value;
           if (dueVal) patch.dueAt = new Date(dueVal).toISOString();
@@ -569,6 +618,27 @@ function wireTasks() {
             alert('Save failed: ' + (e?.message || e));
           }
         };
+
+        row.querySelector('[data-action="view"]').onclick = () => {
+          // jump to the Admin Submissions section and preselect this task
+          showSection("admin-submissions-section");
+          if (typeof window.__subs_selectTaskId === 'function') window.__subs_selectTaskId(t.id);
+        };
+
+        row.querySelector('[data-action="delete"]').onclick = async () => {
+          if (!confirm('Delete this task (and its submissions)?')) return;
+          try {
+            if (typeof window.__fb_deleteTask === 'function') {
+              await window.__fb_deleteTask(window.__getISOWeek ? window.__getISOWeek() : undefined, t.id);
+              await listTasksForAdmin();
+            } else {
+              alert('Missing __fb_deleteTask in firebase.js — update firebase.js to enable deletion.');
+            }
+          } catch (e) {
+            alert('Delete failed: ' + (e?.message || e));
+          }
+        };
+
         adminList.appendChild(row);
       });
     } catch (e) {
@@ -660,9 +730,9 @@ function wireTasks() {
     }
   }
 
-  // Wire events
-  createBtn?.addEventListener('click', createTask);
-  examSaveBtn?.addEventListener('click', saveExamScore);
+  // Wire events (guarded to avoid duplicate listeners that caused double task creation)
+  if (createBtn && !createBtn.dataset.bound) { createBtn.addEventListener('click', createTask, { passive: true }); createBtn.dataset.bound = "1"; }
+  if (examSaveBtn && !examSaveBtn.dataset.bound) { examSaveBtn.addEventListener('click', saveExamScore, { passive: true }); examSaveBtn.dataset.bound = "1"; }
 
   // Refresh based on role & section visibility
   function refresh() {
@@ -679,6 +749,170 @@ function wireTasks() {
 // Refresh tasks when the section is shown
 function refreshTasksUI() {
   if (typeof window.__tasks_refresh === 'function') window.__tasks_refresh();
+}
+
+/* =========================
+   ADMIN: Manage Students (Reset/Delete) — Refresh List button
+   ========================= */
+function wireManageStudents() {
+  const btn   = $("admin-refresh-students");
+  const tbody = $("admin-students-tbody");
+  if (!btn || !tbody) return;
+
+  async function refresh() {
+    if (!window.__isAdmin) { tbody.innerHTML = '<tr><td colspan="3">Admin only.</td></tr>'; return; }
+    tbody.innerHTML = '<tr><td colspan="3">Loading…</td></tr>';
+    try {
+      const rows = await (window.__fb_listApprovedStudents ? window.__fb_listApprovedStudents() : []);
+      tbody.innerHTML = '';
+      if (!rows.length) { tbody.innerHTML = '<tr><td colspan="3">No approved students.</td></tr>'; return; }
+      rows.forEach(s => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${s.displayName || '(Unnamed)'}</td>
+          <td><code>${s.uid}</code></td>
+          <td>
+            <button data-act="reset">Reset</button>
+            <button data-act="delete" style="background:#dc2626">Delete</button>
+          </td>
+        `;
+        tr.querySelector('[data-act="reset"]').onclick = async () => {
+          if (!confirm(`Reset ${s.displayName || s.uid}?`)) return;
+          try { await window.__fb_adminResetUser(s.uid); alert('Reset done.'); refresh(); }
+          catch(e){ alert('Reset failed: ' + (e?.message || e)); }
+        };
+        tr.querySelector('[data-act="delete"]').onclick = async () => {
+          if (!confirm(`Delete ${s.displayName || s.uid}? This removes the Firestore user doc.`)) return;
+          try { await window.__fb_adminDeleteUser(s.uid); alert('Deleted.'); refresh(); }
+          catch(e){ alert('Delete failed: ' + (e?.message || e)); }
+        };
+        tbody.appendChild(tr);
+      });
+    } catch (e) {
+      console.error(e);
+      tbody.innerHTML = '<tr><td colspan="3">Failed to load.</td></tr>';
+    }
+  }
+
+  if (!btn.dataset.bound) { btn.addEventListener('click', refresh); btn.dataset.bound = "1"; }
+  // Auto-refresh when section is shown
+  const cont = $("admin-manage-section");
+  if (cont) {
+    const obs = new MutationObserver(() => {
+      if (!cont.classList.contains('hidden')) refresh();
+    });
+    obs.observe(cont, { attributes: true, attributeFilter: ['class'] });
+  }
+}
+
+/* =========================
+   ADMIN: View Submissions (navbar item injected for admins)
+   ========================= */
+function wireAdminSubmissions() {
+  // Build section if not present
+  let section = $("admin-submissions-section");
+  if (!section) {
+    section = document.createElement("section");
+    section.id = "admin-submissions-section";
+    section.className = "hidden";
+    section.innerHTML = `
+      <h2>📥 Admin: View Submissions</h2>
+      <div class="card">
+        <div class="task-form">
+          <select id="subs-task-select"><option value="">Loading tasks…</option></select>
+          <button id="subs-refresh">Refresh</button>
+        </div>
+        <div class="table-wrap" style="margin-top:10px;">
+          <table class="progress-table">
+            <thead><tr><th>Student</th><th>Link</th><th>Score</th><th>Action</th></tr></thead>
+            <tbody id="subs-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    `;
+    document.querySelector(".main-content main")?.appendChild(section);
+  }
+
+  const select = $("subs-task-select");
+  const refreshBtn = $("subs-refresh");
+  const tbody = $("subs-tbody");
+
+  async function loadTasksIntoSelect() {
+    if (!window.__isAdmin) { select.innerHTML = `<option value="">Admin only</option>`; return; }
+    try {
+      const wk = window.__getISOWeek ? window.__getISOWeek() : undefined;
+      const tasks = await (window.__fb_listTasks ? window.__fb_listTasks(wk) : []);
+      select.innerHTML = `<option value="">— Select a task —</option>`;
+      tasks.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = `${t.title || '(Untitled)'} — ${t.dueAt ? new Date(t.dueAt).toLocaleString() : 'No due'}`;
+        select.appendChild(opt);
+      });
+    } catch (e) {
+      console.warn('loadTasksIntoSelect failed:', e);
+      select.innerHTML = `<option value="">Failed to load tasks</option>`;
+    }
+  }
+
+  async function loadSubmissions() {
+    if (!window.__isAdmin) { tbody.innerHTML = '<tr><td colspan="4">Admin only.</td></tr>'; return; }
+    const taskId = select.value;
+    if (!taskId) { tbody.innerHTML = '<tr><td colspan="4">Pick a task.</td></tr>'; return; }
+    try {
+      if (typeof window.__fb_listSubmissions !== 'function') {
+        tbody.innerHTML = '<tr><td colspan="4">Please update firebase.js to include __fb_listSubmissions.</td></tr>';
+        return;
+      }
+      const wk = window.__getISOWeek ? window.__getISOWeek() : undefined;
+      const subs = await window.__fb_listSubmissions(wk, taskId);
+      tbody.innerHTML = '';
+      if (!subs.length) { tbody.innerHTML = '<tr><td colspan="4">No submissions yet.</td></tr>'; return; }
+      subs.forEach(s => {
+        const tr = document.createElement('tr');
+        const link = s.link ? `<a href="${s.link}" target="_blank" rel="noopener">Open</a>` : '—';
+        tr.innerHTML = `
+          <td>${s.displayName || s.uid}</td>
+          <td>${link}</td>
+          <td><input data-uid="${s.uid}" type="number" min="0" step="1" value="${s.score ?? ''}" style="width:100px;"></td>
+          <td><button data-uid="${s.uid}">Save</button></td>
+        `;
+        tr.querySelector('button[data-uid]').onclick = async (ev) => {
+          const uid = ev.currentTarget.getAttribute('data-uid');
+          const val = tr.querySelector('input[data-uid]').value;
+          try {
+            await window.__fb_scoreSubmission(wk, taskId, uid, Number(val || 0));
+            alert('Saved.');
+          } catch (e) {
+            alert('Save failed: ' + (e?.message || e));
+          }
+        };
+        tbody.appendChild(tr);
+      });
+    } catch (e) {
+      console.error(e);
+      tbody.innerHTML = '<tr><td colspan="4">Failed to load.</td></tr>';
+    }
+  }
+
+  // Bind (guarded)
+  if (refreshBtn && !refreshBtn.dataset.bound) { refreshBtn.addEventListener('click', loadSubmissions); refreshBtn.dataset.bound = "1"; }
+  if (select && !select.dataset.bound) { select.addEventListener('change', loadSubmissions); select.dataset.bound = "1"; }
+
+  // Expose helpers for deep-linking from Tasks
+  window.__subs_refreshOnShow = async () => {
+    applyAdminNavVisibility(!!window.__isAdmin);
+    await loadTasksIntoSelect();
+    await loadSubmissions();
+  };
+  window.__subs_selectTaskId = async (taskId) => {
+    await loadTasksIntoSelect();
+    if (select) select.value = taskId || '';
+    await loadSubmissions();
+  };
+
+  // If this section is already visible (e.g., after injection), initialize it
+  if (!section.classList.contains('hidden')) window.__subs_refreshOnShow();
 }
 
 /* =========================
@@ -753,7 +987,6 @@ function initAttendance() {
       tabTake && (tabTake.style.display = '');
       tabHistory && (tabHistory.style.display = '');
       paneTake && (paneTake.style.display = '');
-      // if History tab isn't active, keep it hidden
       paneHistory && (paneHistory.style.display = (tabHistory?.classList.contains('active') ? '' : 'none'));
       studentView && studentView.classList.add('hidden');
     }
@@ -881,22 +1114,22 @@ function initAttendance() {
   window.__att_renderMyAttendance = renderMyAttendance;
 
   // Wire events
-  loadBtn?.addEventListener('click', loadAttendance);
+  if (loadBtn && !loadBtn.dataset.bound) { loadBtn.addEventListener('click', loadAttendance); loadBtn.dataset.bound = "1"; }
   dateInput?.addEventListener('change', loadAttendance);
-  markAllBtn?.addEventListener('click', () => {
+  if (markAllBtn && !markAllBtn.dataset.bound) { markAllBtn.addEventListener('click', () => {
     if (!window.__isAdmin) return;
     document.querySelectorAll('.att-present').forEach(inp => { inp.checked = true; });
     students.forEach(s => stateMap[s.uid] = { present: true, displayName: s.displayName });
     dirty = true;
-  });
-  clearAllBtn?.addEventListener('click', () => {
+  }); markAllBtn.dataset.bound = "1"; }
+  if (clearAllBtn && !clearAllBtn.dataset.bound) { clearAllBtn.addEventListener('click', () => {
     if (!window.__isAdmin) return;
     document.querySelectorAll('.att-present').forEach(inp => { inp.checked = false; });
     students.forEach(s => stateMap[s.uid] = { present: false, displayName: s.displayName });
     dirty = true;
-  });
-  saveBtn?.addEventListener('click', saveAttendance);
-  histLoadBtn?.addEventListener('click', loadHistoryAdmin);
+  }); clearAllBtn.dataset.bound = "1"; }
+  if (saveBtn && !saveBtn.dataset.bound) { saveBtn.addEventListener('click', saveAttendance); saveBtn.dataset.bound = "1"; }
+  if (histLoadBtn && !histLoadBtn.dataset.bound) { histLoadBtn.addEventListener('click', loadHistoryAdmin); histLoadBtn.dataset.bound = "1"; }
 
   // Expose a hook so router can refresh on show
   window.__att_refreshOnShow = () => {
@@ -912,6 +1145,7 @@ function initAttendance() {
 
 // React to admin role toggles immediately (called from firebase.js)
 window.__onAdminStateChanged = function(isAdmin) {
+  applyAdminNavVisibility(!!isAdmin);
   // Attendance refresh
   if (currentSectionId === 'attendance-section' && typeof window.__att_refreshOnShow === 'function') {
     window.__att_refreshOnShow();
@@ -919,5 +1153,9 @@ window.__onAdminStateChanged = function(isAdmin) {
   // Tasks refresh
   if (currentSectionId === 'tasks-section' && typeof window.__tasks_refresh === 'function') {
     window.__tasks_refresh();
+  }
+  // Submissions refresh
+  if (currentSectionId === 'admin-submissions-section' && typeof window.__subs_refreshOnShow === 'function') {
+    window.__subs_refreshOnShow();
   }
 };
