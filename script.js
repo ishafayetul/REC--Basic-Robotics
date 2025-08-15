@@ -479,7 +479,7 @@ window.renderProgress = renderProgress;
 function shuffleArray(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
+    [arr[i], arr[j]] = [arr[j]];
   }
   return arr;
 }
@@ -487,41 +487,43 @@ function shuffleArray(arr) {
 
 // ---------------- ATTENDANCE ----------------
 (function initAttendance() {
-  // Admin vs Student containers
-  const adminArea   = document.getElementById('attendance-admin-area');
-  const studentView = document.getElementById('attendance-student-view');
-
-  // Tabs (admin)
-  const tabTake    = document.getElementById('att-tab-take');
-  const tabHistory = document.getElementById('att-tab-history');
-  const paneTake   = document.getElementById('att-pane-take');
-  const paneHistory= document.getElementById('att-pane-history');
+  // Admin tabs/panes (no admin wrapper in HTML, so we toggle these directly)
+  const tabTake     = document.getElementById('att-tab-take');
+  const tabHistory  = document.getElementById('att-tab-history');
+  const paneTake    = document.getElementById('att-pane-take');
+  const paneHistory = document.getElementById('att-pane-history');
 
   tabTake?.addEventListener('click', () => {
     tabTake.classList.add('active');
-    tabHistory.classList.remove('active');
-    paneTake.classList.remove('hidden');
-    paneHistory.classList.add('hidden');
+    tabHistory?.classList.remove('active');
+    paneTake?.classList.remove('hidden');
+    paneHistory?.classList.add('hidden');
   });
   tabHistory?.addEventListener('click', () => {
     tabHistory.classList.add('active');
-    tabTake.classList.remove('active');
-    paneHistory.classList.remove('hidden');
-    paneTake.classList.add('hidden');
+    tabTake?.classList.remove('active');
+    paneHistory?.classList.remove('hidden');
+    paneTake?.classList.add('hidden');
+
+    // Friendly prompt when switching to history pane
+    const hb = document.querySelector('#att-hist-table tbody');
+    const hm = document.getElementById('att-hist-meta');
+    if (hb) hb.innerHTML = '<tr><td colspan="2">Pick a date and press “Load History”.</td></tr>';
+    if (hm) hm.textContent = '—';
   });
 
   // Admin take-attendance controls
-  const dateInput  = document.getElementById('attendance-date');
-  const classNoSel = document.getElementById('attendance-classno');
-  const loadBtn    = document.getElementById('attendance-load');
-  const tableBody  = document.querySelector('#attendance-table tbody');
-  const statusEl   = document.getElementById('attendance-status');
-  const noteEl     = document.getElementById('attendance-note');
+  const dateInput   = document.getElementById('attendance-date');
+  const classNoSel  = document.getElementById('attendance-classno');
+  const loadBtn     = document.getElementById('attendance-load');
+  const tableBody   = document.querySelector('#attendance-table tbody');
+  const statusEl    = document.getElementById('attendance-status');
+  const noteEl      = document.getElementById('attendance-note');
 
-  const markAllBtn = document.getElementById('attendance-mark-all');
-  const clearAllBtn= document.getElementById('attendance-clear-all');
-  const saveBtn    = document.getElementById('attendance-save');
-  const saveStatus = document.getElementById('attendance-save-status');
+  const markAllBtn  = document.getElementById('attendance-mark-all');
+  const clearAllBtn = document.getElementById('attendance-clear-all');
+  const saveBtn     = document.getElementById('attendance-save');
+  const saveStatus  = document.getElementById('attendance-save-status');
 
   // Admin history controls
   const histDateInput = document.getElementById('att-hist-date');
@@ -529,15 +531,17 @@ function shuffleArray(arr) {
   const histBody      = document.querySelector('#att-hist-table tbody');
   const histMeta      = document.getElementById('att-hist-meta');
 
-  // Student table
-  const myTableBody = document.querySelector('#my-attendance-table tbody');
+  // Student-only table
+  const studentView  = document.getElementById('attendance-student-view');
+  const myTableBody  = document.querySelector('#my-attendance-table tbody');
 
-  // Default date (today)
-  if (dateInput) {
+  // Default dates = today (local) for both pickers (if present)
+  (function initDates(){
     const t = new Date();
     const yyyy = t.getFullYear(), mm = String(t.getMonth()+1).padStart(2,'0'), dd = String(t.getDate()).padStart(2,'0');
-    dateInput.value = `${yyyy}-${mm}-${dd}`;
-  }
+    if (dateInput)     dateInput.value = `${yyyy}-${mm}-${dd}`;
+    if (histDateInput) histDateInput.value = `${yyyy}-${mm}-${dd}`;
+  })();
 
   let students = []; // [{uid, displayName}]
   let stateMap = {}; // uid -> {present:boolean}
@@ -551,9 +555,24 @@ function shuffleArray(arr) {
   function renderNote(){
     const isAdmin = !!window.__isAdmin;
 
-    // Toggle containers
-    if (adminArea) adminArea.style.display = isAdmin ? '' : 'none';
-    if (studentView) studentView.classList.toggle('hidden', isAdmin);
+    // Toggle admin elements (no wrapper — hide panes and tabs)
+    if (!isAdmin) {
+      // Hide both admin panes and tab buttons
+      paneTake && (paneTake.style.display = 'none');
+      paneHistory && (paneHistory.style.display = 'none');
+      tabTake && (tabTake.style.display = 'none');
+      tabHistory && (tabHistory.style.display = 'none');
+      // Show student-only view
+      if (studentView) studentView.classList.remove('hidden');
+    } else {
+      // Show admin tabs and default to Take pane visible
+      tabTake && (tabTake.style.display = '');
+      tabHistory && (tabHistory.style.display = '');
+      paneTake && (paneTake.style.display = '');
+      paneHistory && (paneHistory.style.display = (tabHistory?.classList.contains('active') ? '' : 'none'));
+      // Hide student view for admins
+      if (studentView) studentView.classList.add('hidden');
+    }
 
     if (noteEl) {
       noteEl.textContent = isAdmin
@@ -561,7 +580,7 @@ function shuffleArray(arr) {
         : "You are not an admin. Attendance is read-only.";
     }
 
-    // Disable admin-only controls if not admin
+    // Disable admin-only controls if not admin (extra safety)
     [classNoSel, dateInput, histDateInput, markAllBtn, clearAllBtn, saveBtn].forEach(el => {
       if (el) el.disabled = !isAdmin;
     });
@@ -591,8 +610,8 @@ function shuffleArray(arr) {
 
   // Admin: load list + attendance for selected date
   async function loadAttendance(){
-    if (!window.__isAdmin) return; // safety
-    if (!dateInput || !tableBody) return;
+    if (!window.__isAdmin) return;                  // safety
+    if (!dateInput || !tableBody) return;           // this feature needs them
 
     setStatus('Loading students & attendance…');
     setSaveStatus('');
@@ -634,10 +653,15 @@ function shuffleArray(arr) {
     if (!window.__isAdmin) return;
     if (!histBody || !histDateInput) return;
 
-    const dkey = histDateInput.value;
-    if (!dkey) { histBody.innerHTML = '<tr><td colspan="2">Pick a date.</td></tr>'; return; }
+    const dkey = (histDateInput.value || '').trim();
+    if (!dkey) {
+      histBody.innerHTML = '<tr><td colspan="2">Pick a date first.</td></tr>';
+      if (histMeta) histMeta.textContent = '—';
+      return;
+    }
 
     histBody.innerHTML = '<tr><td colspan="2">Loading…</td></tr>';
+    if (histMeta) histMeta.textContent = 'Loading…';
     try {
       const studentsList = await (window.__fb_listStudents ? window.__fb_listStudents() : []);
       const att = await (window.__fb_getAttendance ? window.__fb_getAttendance(dkey) : {});
@@ -658,6 +682,7 @@ function shuffleArray(arr) {
     } catch (e) {
       console.error(e);
       histBody.innerHTML = '<tr><td colspan="2">Failed to load.</td></tr>';
+      if (histMeta) histMeta.textContent = 'Failed to load.';
     }
   }
 
@@ -694,20 +719,20 @@ function shuffleArray(arr) {
   dateInput?.addEventListener('change', loadAttendance);
 
   markAllBtn?.addEventListener('click', () => {
-    if (!window.__isAdmin) return;
+    if (!window.__isAdmin || !tableBody) return;
     students.forEach(s => { stateMap[s.uid] = { present: true, displayName: s.displayName }; });
     document.querySelectorAll('.att-present').forEach(inp => { inp.checked = true; });
     dirty = true;
   });
   clearAllBtn?.addEventListener('click', () => {
-    if (!window.__isAdmin) return;
+    if (!window.__isAdmin || !tableBody) return;
     students.forEach(s => { stateMap[s.uid] = { present: false, displayName: s.displayName }; });
     document.querySelectorAll('.att-present').forEach(inp => { inp.checked = false; });
     dirty = true;
   });
 
   saveBtn?.addEventListener('click', async () => {
-    if (!window.__isAdmin) return;
+    if (!window.__isAdmin || !tableBody) return;
     try {
       // Save Class No meta if selected (admins only by rules)
       if (classNoSel && classNoSel.value !== '') {
@@ -740,12 +765,18 @@ function shuffleArray(arr) {
     }
   });
 
+  // Wire history loader (works regardless of Take Attendance elements)
+  histLoadBtn?.addEventListener('click', loadHistoryAdmin);
+
   // Initial load (role-aware)
   if (window.__isAdmin) {
     loadAttendance();
   } else {
     renderMyAttendance();
   }
+
+  // Run an initial visibility pass (in case Attendance is the first section opened)
+  renderNote();
 })();
 
 // When admin role resolves in firebase.js, adjust the attendance view immediately
@@ -759,17 +790,6 @@ window.__onAdminStateChanged = function(isAdmin) {
       // auto-load admin table when promoted to admin
       const loadBtn = document.getElementById('attendance-load');
       loadBtn?.click();
-    }
-  }
-};
-
-
-// When admin role resolves in firebase.js, adjust the attendance view immediately
-window.__onAdminStateChanged = function(isAdmin) {
-  if (currentSectionId === 'attendance-section') {
-    if (typeof window.__att_renderNote === 'function') window.__att_renderNote();
-    if (!isAdmin && typeof window.__att_renderMyAttendance === 'function') {
-      window.__att_renderMyAttendance();
     }
   }
 };
