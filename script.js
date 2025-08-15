@@ -53,6 +53,8 @@ window.onload = () => {
   wireAdminSubmissions(); // new admin-only section
   initAttendance(); // sets up attendance tabs + handlers
   updateScore();
+  wireAdminResetDB();
+
 };
 
 // Called by firebase.js once auth/admin resolved
@@ -66,6 +68,8 @@ window.__initAfterLogin = () => {
   wireProgressCombined();
   // Hide admin-only nav items for students
   applyAdminNavVisibility(!!window.__isAdmin);
+  wireAdminResetDB();
+
 };
 
 // Persist pending session safely on leave (firebase.js will try to commit next launch)
@@ -1326,3 +1330,55 @@ window.__onAdminStateChanged = function(isAdmin) {
   }
 
 };
+
+function wireAdminResetDB(){
+  const section = $("admin-resetdb-section");
+  if (!section) return;
+  const input  = $("resetdb-confirm");
+  const btn    = $("resetdb-run");
+  const status = $("resetdb-status");
+
+  function refreshVisibility(){
+    // show only for admins
+    section.style.display = window.__isAdmin ? "" : "none";
+  }
+
+  async function runWipe(){
+    if (!window.__isAdmin) { alert("Admin only."); return; }
+    const phrase = (input?.value || "").trim().toUpperCase();
+    if (phrase !== "I UNDERSTAND") {
+      alert('Please type exactly: I UNDERSTAND');
+      return;
+    }
+    if (!confirm("This will delete ALL course data. Are you absolutely sure?")) return;
+    if (!confirm("Final confirmation: proceed with FULL WIPE?")) return;
+
+    btn.disabled = true; status.textContent = "Wiping… this may take a minute.";
+    try {
+      if (typeof window.__fb_adminWipeAll !== "function") throw new Error("Missing __fb_adminWipeAll in firebase.js");
+      await window.__fb_adminWipeAll();
+      status.textContent = "Done. All course data cleared.";
+      input.value = "";
+      // Optional: toast + redirect user back to dashboard
+      window.showToast && window.showToast("Database wiped successfully.");
+    } catch (e) {
+      console.error(e);
+      status.textContent = "Failed: " + (e?.message || e);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  if (btn && !btn.dataset.bound) { btn.addEventListener("click", runWipe); btn.dataset.bound = "1"; }
+
+  // refresh on role changes
+  refreshVisibility();
+  const obs = new MutationObserver(refreshVisibility);
+  obs.observe(section, { attributes: true, attributeFilter: ["class"] });
+}
+
+// call it on load and after login
+// In window.onload (after other wires):
+//   wireAdminResetDB();
+// In window.__initAfterLogin():
+//   wireAdminResetDB();

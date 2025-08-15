@@ -968,6 +968,77 @@ window.__fb_adminDeleteUser = async function(uid){
   return true;
 };
 
+// =============================
+// ADMIN: Full Database Wipe
+// =============================
+// This removes ALL course data across the app and sets all users to approved:false.
+// It preserves the 'admins/*' docs and the 'users/*' profile docs.
+window.__fb_adminWipeAll = async function(){
+  if (!window.__isAdmin) throw new Error("Admin only");
+
+  async function deleteAllDocs(colRef){
+    const snap = await getDocs(colRef);
+    if (snap.empty) return;
+    const batch = writeBatch(db);
+    snap.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
+
+  // 1) tasks/*/items/* and submissions
+  const weeks = await getDocs(collection(db, 'tasks'));
+  for (const wkDoc of weeks.docs) {
+    const items = await getDocs(collection(db, 'tasks', wkDoc.id, 'items'));
+    for (const it of items.docs) {
+      await deleteAllDocs(collection(db, 'tasks', wkDoc.id, 'items', it.id, 'submissions'));
+      await deleteDoc(it.ref);
+    }
+    await deleteDoc(wkDoc.ref);
+  }
+
+  // 2) examScores/*/users/*
+  const exWeeks = await getDocs(collection(db, 'examScores'));
+  for (const wkDoc of exWeeks.docs) {
+    await deleteAllDocs(collection(db, 'examScores', wkDoc.id, 'users'));
+    await deleteDoc(wkDoc.ref);
+  }
+
+  // 3) dailyLeaderboard/*/users/*
+  const daysLB = await getDocs(collection(db, 'dailyLeaderboard'));
+  for (const dayDoc of daysLB.docs) {
+    await deleteAllDocs(collection(db, 'dailyLeaderboard', dayDoc.id, 'users'));
+    await deleteDoc(dayDoc.ref);
+  }
+
+  // 4) attendance/*/students/*
+  const daysAtt = await getDocs(collection(db, 'attendance'));
+  for (const dayDoc of daysAtt.docs) {
+    await deleteAllDocs(collection(db, 'attendance', dayDoc.id, 'students'));
+    await deleteDoc(dayDoc.ref);
+  }
+
+  // 5) delete all users except admins
+  const adminsSnap = await getDocs(collection(db, 'admins'));
+  const adminIds = new Set(); adminsSnap.forEach(a => adminIds.add(a.id));
+
+  const usersSnap = await getDocs(collection(db, 'users'));
+  for (const u of usersSnap.docs) {
+    const uid = u.id;
+    if (adminIds.has(uid)) {
+      // Clean admin's subcollections but keep doc
+      await deleteAllDocs(collection(db, 'users', uid, 'attempts'));
+      await deleteAllDocs(collection(db, 'users', uid, 'daily'));
+      continue;
+    }
+    // remove subcollections then delete user doc
+    await deleteAllDocs(collection(db, 'users', uid, 'attempts'));
+    await deleteAllDocs(collection(db, 'users', uid, 'daily'));
+    await deleteDoc(doc(db, 'users', uid));
+  }
+
+  return true;
+};
+
+
 // ——— expose ISO week helper for the rest of the app ———
 window.__getISOWeek = getISOWeek; // now script.js (or others) can call window.__getISOWeek()
 
