@@ -28,6 +28,29 @@ let currentSectionId = "practice-select";
 let committing = false;
 
 /* =========================
+   Resume state (per deck)
+   ========================= */
+// Stored as: { [setName]: { index:number, total:number } }
+let resumeMap = JSON.parse(localStorage.getItem("practiceResume") || "{}");
+
+function getResume(setName){
+  const r = resumeMap[setName];
+  if (!r || typeof r.index !== "number") return null;
+  return r;
+}
+function setResume(setName, index, total){
+  resumeMap[setName] = {
+    index: Math.max(0, index|0),
+    total: (total|0) || (allSets[setName]?.length || 0)
+  };
+  localStorage.setItem("practiceResume", JSON.stringify(resumeMap));
+}
+function clearResume(setName){
+  delete resumeMap[setName];
+  localStorage.setItem("practiceResume", JSON.stringify(resumeMap));
+}
+
+/* =========================
    Tiny helpers
    ========================= */
 const $ = (id) => document.getElementById(id);
@@ -36,6 +59,34 @@ function statusLine(id, msg) { const s = $(id); if (s) s.textContent = msg; }
 function persistSession() { localStorage.setItem("sessionBuf", JSON.stringify(sessionBuf)); }
 function percent(n, d) { return !d ? 0 : Math.floor((n / d) * 100); }
 function shuffleArray(arr) { for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } return arr; }
+
+/* =========================
+   Restart helper (uses resume state)
+   ========================= */
+function restartDeck(name){
+  clearResume(name); // wipe resume pointer
+
+  currentSet = allSets[name] || [];
+  currentSetName = name;
+  currentIndex = 0;
+
+  score = { correct: 0, wrong: 0, skipped: 0 };
+  sessionBuf = {
+    deckName: name, mode: "mcq",
+    correct: 0, wrong: 0, skipped: 0, total: 0,
+    jpEnCorrect: 0, enJpCorrect: 0
+  };
+  persistSession();
+
+  showSection("practice");
+  showQuestion();
+  updateScore();
+  updateDeckProgress();
+
+  const hint = $("resume-hint");
+  if (hint) hint.textContent = "";
+}
+
 
 /* =========================
    Lifecycle
@@ -162,56 +213,190 @@ async function loadPracticeManifest() {
   }
 }
 
+// Parse CSV safely (handles "quoted, fields", newlines in quotes, and double-quotes)
+function parseCSV(text){
+  const rows = [];
+  let row = [];
+  let cur = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++){
+    const ch = text[i];
+    if (inQuotes){
+      if (ch === '"'){
+        // Escaped quote?
+        if (text[i+1] === '"'){ cur += '"'; i++; }
+        else { inQuotes = false; }
+      } else {
+        cur += ch;
+      }
+    } else {
+      if (ch === '"'){
+        inQuotes = true;
+      } else if (ch === ','){
+        row.push(cur.trim());
+        cur = '';
+      } else if (ch === '\n'){
+        row.push(cur.trim());
+        rows.push(row);
+        row = [];
+        cur = '';
+      } else if (ch === '\r'){
+        // ignore (normalize CRLF)
+      } else {
+        cur += ch;
+      }
+    }
+  }
+  // flush last field
+  if (cur.length || inQuotes || row.length) {
+    row.push(cur.trim());
+    rows.push(row);
+  }
+  // filter truly empty lines
+  return rows.filter(r => r.some(c => c && c.length));
+}
+
+// Parse CSV safely (quotes, commas inside quotes, newlines, "" escapes)
+function parseCSV(text){
+  const rows = [];
+  let row = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++){
+    const ch = text[i];
+    if (inQuotes){
+      if (ch === '"'){
+        if (text[i+1] === '"'){ cur += '"'; i++; }
+        else { inQuotes = false; }
+      } else cur += ch;
+    } else {
+      if (ch === '"') inQuotes = true;
+      else if (ch === ','){ row.push(cur.trim()); cur = ''; }
+      else if (ch === '\n'){ row.push(cur.trim()); rows.push(row); row = []; cur = ''; }
+      else if (ch === '\r'){ /* ignore */ }
+      else cur += ch;
+    }
+  }
+  if (cur.length || inQuotes || row.length){ row.push(cur.trim()); rows.push(row); }
+  return rows.filter(r => r.some(c => c && c.length));
+}
+
 async function fetchAndParseMCQ(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  const text = await res.text();
+  const raw = await res.text();
+  const rows = parseCSV(raw.replace(/\uFEFF/g, '')); // strip BOM if any
 
-  const lines = text.replace(/\r\n?/g, "\n").split("\n").filter(Boolean);
-  const rows = lines.map((line) => {
-    // CSV format: Question, option1, option2, option3, option4  (no header)
-    const parts = line.split(",");
-    const q  = (parts[0] || "").trim();
-    const o1 = (parts[1] || "").trim();
-    const o2 = (parts[2] || "").trim();
-    const o3 = (parts[3] || "").trim();
-    const o4 = (parts[4] || "").trim();
-    const options = [o1, o2, o3, o4].filter(Boolean);
-    return { q, options, correctIndex: 0 }; // first option is correct
-  }).filter(r => r.q && r.options.length >= 2);
-  return rows;
+  // Optional header detection
+  let startIdx = 0;
+  if (rows.length && (rows[0][0]||'').toLowerCase() === 'question') startIdx = 1;
+
+  const out = [];
+  for (let i = startIdx; i < rows.length; i++){
+    const cols = rows[i];
+    // Expected: question, op1, op2, op3, op4, ans
+    const q  = (cols[0] || '').trim();
+    const o1 = (cols[1] || '').trim();
+    const o2 = (cols[2] || '').trim();
+    const o3 = (cols[3] || '').trim();
+    const o4 = (cols[4] || '').trim();
+    const ans = (cols[5] || '').trim();
+    const options = [o1,o2,o3,o4].filter(Boolean);
+    if (!q || options.length < 2) continue;
+
+    // Map 'ans' (full text) to one of the options; fallback to first
+    let correctIndex = 0;
+    if (ans){
+      const ix = options.findIndex(o => o === ans);
+      correctIndex = ix >= 0 ? ix : 0;
+    }
+    out.push({ q, options, correctIndex });
+  }
+  return out;
 }
+
+
 
 function renderPracticeButtons() {
   const container = $("practice-buttons");
   if (!container) return;
   container.innerHTML = "";
+
   Object.keys(allSets).forEach((name) => {
-    const btn = document.createElement("button");
-    btn.textContent = name;
-    btn.onclick = async () => {
+    const wrap = document.createElement("div");
+    wrap.style.display = "flex";
+    wrap.style.alignItems = "center";
+    wrap.style.gap = "8px";
+    wrap.style.flexWrap = "wrap";
+
+    const r = getResume(name);
+    const mainBtn = document.createElement("button");
+
+    if (r && r.total){
+      const done = Math.min(r.index, r.total);
+      const pct = percent(done, r.total);
+      mainBtn.textContent = `${name} · Continue ${done}/${r.total} (${pct}%)`;
+      mainBtn.title = "Resume where you left off";
+    } else {
+      mainBtn.textContent = name;
+    }
+
+    mainBtn.onclick = async () => {
       if (sessionBuf.total > 0 && sessionBuf.deckName && sessionBuf.deckName !== name) {
         await autoCommitIfNeeded("switch set");
       }
       selectSet(name);
     };
-    container.appendChild(btn);
+    wrap.appendChild(mainBtn);
+
+    // ↺ Restart button appears only if there is a resume save
+    if (r && r.total){
+      const restartBtn = document.createElement("button");
+      restartBtn.textContent = "↺ Restart";
+      restartBtn.style.background = "#6b7280";        // subtle neutral
+      restartBtn.style.whiteSpace = "nowrap";
+      restartBtn.onclick = async (e) => {
+        e.stopPropagation();
+        if (sessionBuf.total > 0 && sessionBuf.deckName && sessionBuf.deckName !== name) {
+          await autoCommitIfNeeded("switch set");
+        }
+        restartDeck(name);
+      };
+      wrap.appendChild(restartBtn);
+    }
+
+    container.appendChild(wrap);
   });
 }
+
+
 
 function selectSet(name) {
   currentSet = allSets[name] || [];
   currentSetName = name;
-  currentIndex = 0;
+
   if (currentSet.length === 0) { alert(`Set "${name}" is empty.`); return; }
+
+  // Start at resume index (if any)
+  const r = getResume(name);
+  currentIndex = r ? Math.min(r.index, currentSet.length - 1) : 0;
 
   score = { correct: 0, wrong: 0, skipped: 0 };
   sessionBuf = { deckName: name, mode: "mcq", correct: 0, wrong: 0, skipped: 0, total: 0, jpEnCorrect: 0, enJpCorrect: 0 };
   persistSession();
+
   showSection("practice");
   showQuestion();
   updateScore();
   updateDeckProgress();
+
+  // Tiny hint line
+  const hint = $("resume-hint");
+  if (hint) {
+    if (r && r.index > 0) hint.textContent = `Resumed at question ${currentIndex + 1} of ${currentSet.length}.`;
+    else hint.textContent = '';
+  }
 }
 
 function showQuestion() {
@@ -222,17 +407,16 @@ function showQuestion() {
   const optionsList = $("options"); if (!optionsList) return;
   optionsList.innerHTML = "";
 
-  const shuffled = q.options.slice();
-  // No shuffling required by spec.
-
   const correct = q.options[q.correctIndex];
-  shuffled.forEach((opt) => {
+  q.options.forEach((opt) => {
     const li = document.createElement("li");
     li.textContent = opt;
     li.onclick = () => checkAnswer(opt, correct, q);
     optionsList.appendChild(li);
   });
 
+  // Save resume pointer frequently
+  if (currentSetName) setResume(currentSetName, currentIndex, currentSet.length);
   updateDeckProgress();
 }
 
@@ -273,9 +457,16 @@ window.skipQuestion = skipQuestion;
 
 function nextQuestion() {
   currentIndex++;
+
+  // Keep resume fresh while advancing
+  if (currentSetName) setResume(currentSetName, Math.min(currentIndex, currentSet.length - 1), currentSet.length);
+
   if (currentIndex >= currentSet.length) {
+    // Clear resume for this deck when finished
+    clearResume(currentSetName);
     alert(`Finished! ✅ ${score.correct} ❌ ${score.wrong} ➖ ${score.skipped}\nSaving your progress…`);
     showSection("practice-select");
+    renderPracticeButtons(); // refresh buttons so "↺ Restart" disappears
   } else {
     showQuestion();
   }
