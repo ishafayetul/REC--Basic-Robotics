@@ -37,6 +37,7 @@ const todoFlyout = document.getElementById('todo-flyout');
 const todoTimer  = document.getElementById('todo-timer');
 const todoList   = document.getElementById('todo-list');
 const adminRow   = document.getElementById('admin-row');
+const attendanceNote = document.getElementById('attendance-note');
 const adminInput = document.getElementById('admin-task-input');
 const adminAdd   = document.getElementById('admin-task-add');
 
@@ -114,10 +115,15 @@ onAuthStateChanged(auth, async (user) => {
       if (adminRow) {
         try {
           const adminSnap = await getDoc(doc(db, 'admins', user.uid));
-          adminRow.classList.toggle('hidden', !adminSnap.exists());
+          const isAdmin = adminSnap.exists();
+          window.__isAdmin = !!isAdmin;
+          adminRow.classList.toggle('hidden', !isAdmin);
         } catch {
+          window.__isAdmin = false;
           adminRow.classList.add('hidden');
         }
+      } else {
+        window.__isAdmin = false;
       }
 
       // Admin add-task
@@ -499,3 +505,55 @@ window.__fb_fetchAttempts = async function (limitN = 20) {
 
 // Expose sign out (optional if you want to add a sign-out button later)
 window.__signOut = () => signOut(auth);
+
+
+// ---------------- Attendance API ----------------
+// Data model:
+// attendance/{YYYY-MM-DD}/students/{uid} => { present: boolean, markedBy: uid, markedAt: serverTimestamp(), displayName }
+
+/** List all students (users) */
+window.__fb_listStudents = async function () {
+  const qy = query(collection(db, 'users'), orderBy('displayName'));
+  const snap = await getDocs(qy);
+  const rows = [];
+  snap.forEach(d => rows.push({ uid: d.id, ...(d.data() || {}) }));
+  return rows;
+};
+
+/** Get attendance map for a given date key 'YYYY-MM-DD' */
+window.__fb_getAttendance = async function (dateKey) {
+  const colRef = collection(db, 'attendance', dateKey, 'students');
+  const snap = await getDocs(colRef);
+  const map = {};
+  snap.forEach(d => map[d.id] = d.data());
+  return map; // { uid: {present: true/false, displayName, markedBy, markedAt} }
+};
+
+/** Set attendance for a single student */
+window.__fb_setAttendance = async function (dateKey, uid, present, displayName) {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Not signed in');
+  await setDoc(doc(db, 'attendance', dateKey, 'students', uid), {
+    present: !!present,
+    displayName: displayName || null,
+    markedBy: user.uid,
+    markedAt: serverTimestamp()
+  }, { merge: true });
+};
+
+/** Bulk save attendance changes: records = [{uid, present, displayName}] */
+window.__fb_saveAttendanceBulk = async function (dateKey, records) {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Not signed in');
+  const batch = writeBatch(db);
+  records.forEach(r => {
+    const ref = doc(db, 'attendance', dateKey, 'students', r.uid);
+    batch.set(ref, {
+      present: !!r.present,
+      displayName: r.displayName || null,
+      markedBy: user.uid,
+      markedAt: serverTimestamp()
+    }, { merge: true });
+  });
+  await batch.commit();
+};

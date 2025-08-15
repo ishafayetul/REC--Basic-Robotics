@@ -473,3 +473,115 @@ function shuffleArray(arr) {
   }
   return arr;
 }
+
+
+// ---------------- ATTENDANCE ----------------
+(function initAttendance() {
+  const dateInput = document.getElementById('attendance-date');
+  const loadBtn = document.getElementById('attendance-load');
+  const tableBody = document.querySelector('#attendance-table tbody');
+  const statusEl = document.getElementById('attendance-status');
+  const noteEl = document.getElementById('attendance-note');
+  const markAllBtn = document.getElementById('attendance-mark-all');
+  const clearAllBtn = document.getElementById('attendance-clear-all');
+  const saveBtn = document.getElementById('attendance-save');
+  const saveStatus = document.getElementById('attendance-save-status');
+
+  if (!dateInput || !tableBody) return;
+
+  // Default date = today (local)
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth()+1).padStart(2,'0');
+  const dd = String(today.getDate()).padStart(2,'0');
+  dateInput.value = `${yyyy}-${mm}-${dd}`;
+
+  let students = []; // [{uid, displayName}]
+  let stateMap = {}; // uid -> {present:boolean}
+  let dirty = false;
+
+  function setStatus(msg){ if(statusEl) statusEl.textContent = msg || ''; }
+  function setSaveStatus(msg){ if(saveStatus) saveStatus.textContent = msg || ''; }
+  function dateKey(){ return dateInput.value; }
+
+  function renderNote(){
+    const isAdmin = !!window.__isAdmin;
+    if (noteEl) {
+      noteEl.textContent = isAdmin
+        ? "You are marked as admin. You can edit attendance."
+        : "You are not an admin. Attendance is read-only.";
+    }
+    if (markAllBtn) markAllBtn.disabled = !isAdmin;
+    if (clearAllBtn) clearAllBtn.disabled = !isAdmin;
+    if (saveBtn) saveBtn.disabled = !isAdmin;
+    const inputs = document.querySelectorAll('.att-present');
+    inputs.forEach(inp => inp.disabled = !isAdmin);
+  }
+
+  function buildRow(stu){
+    const tr = document.createElement('tr');
+    const nameTd = document.createElement('td');
+    nameTd.textContent = stu.displayName || '(Unnamed)';
+    const presentTd = document.createElement('td');
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.className = 'att-present';
+    chk.checked = !!(stateMap[stu.uid]?.present);
+    chk.onchange = () => { stateMap[stu.uid] = { present: chk.checked, displayName: stu.displayName }; dirty = true; };
+    presentTd.appendChild(chk);
+    tr.append(nameTd, presentTd);
+    return tr;
+  }
+
+  async function loadAttendance(){
+    setStatus('Loading students & attendance…');
+    setSaveStatus('');
+    dirty = false;
+    try {
+      students = await (window.__fb_listStudents ? window.__fb_listStudents() : []);
+      const att = await (window.__fb_getAttendance ? window.__fb_getAttendance(dateKey()) : {});
+      stateMap = {};
+      students.forEach(s => {
+        stateMap[s.uid] = { present: !!(att[s.uid]?.present), displayName: s.displayName || null };
+      });
+      // Render table
+      tableBody.innerHTML = '';
+      students.forEach(s => tableBody.appendChild(buildRow(s)));
+      setStatus(`Loaded ${students.length} students.`);
+      renderNote();
+    } catch(e){
+      console.error('Attendance load failed:', e);
+      setStatus('Failed to load attendance.');
+    }
+  }
+
+  // Actions
+  loadBtn?.addEventListener('click', loadAttendance);
+  dateInput?.addEventListener('change', loadAttendance);
+  markAllBtn?.addEventListener('click', () => {
+    students.forEach(s => { stateMap[s.uid] = { present: true, displayName: s.displayName }; });
+    // update checkboxes
+    document.querySelectorAll('.att-present').forEach(inp => { inp.checked = true; });
+    dirty = true;
+  });
+  clearAllBtn?.addEventListener('click', () => {
+    students.forEach(s => { stateMap[s.uid] = { present: false, displayName: s.displayName }; });
+    document.querySelectorAll('.att-present').forEach(inp => { inp.checked = false; });
+    dirty = true;
+  });
+  saveBtn?.addEventListener('click', async () => {
+    if (!dirty) { setSaveStatus('No changes.'); return; }
+    try {
+      const records = students.map(s => ({ uid: s.uid, present: !!(stateMap[s.uid]?.present), displayName: s.displayName }));
+      await (window.__fb_saveAttendanceBulk ? window.__fb_saveAttendanceBulk(dateKey(), records) : Promise.resolve());
+      setSaveStatus('Saved ✔');
+      dirty = false;
+    } catch(e){
+      console.error('Attendance save failed:', e);
+      setSaveStatus('Save failed.');
+    }
+  });
+
+  // Initial load
+  loadAttendance();
+})();

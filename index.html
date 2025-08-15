@@ -27,6 +27,7 @@
       <button onclick="showSection('progress-section')">📈 Progress</button>
       <button onclick="showSection('course-leaderboard-section')">🏆 Course Leaderboard</button>
       <button onclick="showSection('weekly-leaderboard-section')">📅 Weekly Leaderboard</button>
+      <button onclick="showSection('attendance-section')">🗒️ Attendance</button>
       <button onclick="showSection('simulation-section')">🔧 Simulation</button>
       <button onclick="showSection('mistakes-section')">❗ Mistakes</button>
     </nav>
@@ -138,6 +139,37 @@
             <button>Open Tinkercad</button>
           </a>
         </section>
+
+        
+        <!-- Attendance -->
+        <section id="attendance-section" class="hidden">
+          <h2>🗒️ Attendance</h2>
+          <div class="attendance-controls">
+            <label for="attendance-date"><b>Date</b></label>
+            <input type="date" id="attendance-date" />
+            <button id="attendance-load">Load</button>
+            <span id="attendance-status" class="muted"></span>
+          </div>
+          <div class="table-wrap">
+            <table id="attendance-table" class="progress-table">
+              <thead>
+                <tr>
+                  <th style="min-width:220px;">Student</th>
+                  <th>Present?</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div class="attendance-actions">
+            <button id="attendance-mark-all">Mark All Present</button>
+            <button id="attendance-clear-all">Clear All</button>
+            <button id="attendance-save">Save Changes</button>
+            <span id="attendance-save-status" class="muted"></span>
+          </div>
+          <p class="muted" id="attendance-note"></p>
+        </section>
+    
 
         <!-- Mistakes -->
         <section id="mistakes-section" class="hidden">
