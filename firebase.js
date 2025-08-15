@@ -1181,3 +1181,40 @@ if (!window.__fb_listStudents) {
 
 // Small helper: current UID (null if signed-out)
 window.__getCurrentUid = () => (auth.currentUser ? auth.currentUser.uid : null);
+// =============================
+// Universal soft refresh (no sign-out)
+// Re-subscribes snapshots (LBs, alerts, flyout) so initial snapshots re-pull fresh data.
+// =============================
+window.__softRefreshData = async function(){
+  try {
+    // 1) Restart leaderboard listeners (these fire immediately with a fresh snapshot)
+    if (unsubWeeklyLB) { try{ unsubWeeklyLB(); }catch{}; unsubWeeklyLB = null; }
+    if (unsubOverallLB) { try{ unsubOverallLB(); }catch{}; unsubOverallLB = null; }
+    if (weeklyLbList) subscribeWeeklyLeaderboard();
+    if (courseLbList) subscribeCourseLeaderboard();
+
+    // 2) Re-arm admin alert listeners (if admin)
+    if (window.__isAdmin) {
+      try { subscribeAdminApprovalAlerts(); } catch(e){ console.warn('refresh approvals', e); }
+      try { subscribeAdminSubmissionAlerts(); } catch(e){ console.warn('refresh submissions', e); }
+    }
+
+    // 3) Recreate the student weekly task flyout subscription (if student)
+    const user = auth.currentUser;
+    if (user && !window.__isAdmin) {
+      try { 
+        // re-subscribe for current week
+        if (typeof subscribeWeeklyTaskFlyout === 'function') {
+          // unsubscribe if firebase.js set one earlier
+          if (typeof unsubTasksFlyout === 'function') { try{unsubTasksFlyout();}catch{}; }
+          await subscribeWeeklyTaskFlyout(user.uid);
+        }
+      } catch(e){ console.warn('refresh todo flyout', e); }
+    }
+
+    return true;
+  } catch (e) {
+    console.warn('[softRefresh] failed:', e?.message || e);
+    return false;
+  }
+};

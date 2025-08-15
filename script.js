@@ -54,6 +54,7 @@ window.onload = () => {
   initAttendance(); // sets up attendance tabs + handlers
   updateScore();
   wireAdminResetDB();
+  wireSoftRefreshButton();
 
 };
 
@@ -69,6 +70,7 @@ window.__initAfterLogin = () => {
   // Hide admin-only nav items for students
   applyAdminNavVisibility(!!window.__isAdmin);
   wireAdminResetDB();
+  wireSoftRefreshButton();
 
 };
 
@@ -1382,3 +1384,45 @@ function wireAdminResetDB(){
 //   wireAdminResetDB();
 // In window.__initAfterLogin():
 //   wireAdminResetDB();
+function wireSoftRefreshButton(){
+  const btn = $("soft-refresh-btn");
+  if (!btn || btn.dataset.bound) return;
+
+  async function doRefresh(){
+    btn.disabled = true;
+    try {
+      // Commit any locally buffered practice so the new data reflects it
+      if (typeof window.__fb_commitLocalPendingSession === 'function') {
+        try { await window.__fb_commitLocalPendingSession(); } catch {}
+      }
+
+      // Ask firebase.js to re-subscribe to Firestore live queries
+      if (typeof window.__softRefreshData === 'function') {
+        await window.__softRefreshData();
+      }
+
+      // Re-render currently relevant UI pieces
+      try { refreshTasksUI(); } catch {}
+      try { renderProgress(); } catch {}
+      try { wireProgressCombined(); } catch {}
+
+      // If these sections are visible, refresh them too
+      if (currentSectionId === 'attendance-section' && typeof window.__att_refreshOnShow === 'function') {
+        window.__att_refreshOnShow();
+      }
+      if (currentSectionId === 'admin-submissions-section' && typeof window.__subs_refreshOnShow === 'function') {
+        window.__subs_refreshOnShow();
+      }
+
+      // small toast
+      if (typeof window.showToast === 'function') {
+        window.showToast('Refreshed from database.');
+      }
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  btn.addEventListener('click', doRefresh, { passive: true });
+  btn.dataset.bound = "1";
+}
