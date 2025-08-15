@@ -38,8 +38,12 @@
       <button onclick="showSection('course-leaderboard-section')">🏆 Course Leaderboard</button>
       <button onclick="showSection('weekly-leaderboard-section')">📅 Weekly Leaderboard</button>
       <button onclick="showSection('attendance-section')">🗒️ Attendance</button>
-      <button onclick="showSection('admin-approvals-section')">✅ Admin: Approvals</button>
-      <button onclick="showSection('admin-manage-section')">🧑‍🏫 Admin: Manage Students</button>
+
+      <!-- Admin-only nav items (students won’t see these; JS toggles) -->
+      <button class="admin-only" onclick="showSection('admin-approvals-section')">✅ Admin: Approvals</button>
+      <button class="admin-only" onclick="showSection('admin-manage-section')">🧑‍🏫 Admin: Manage Students</button>
+      <button class="admin-only" onclick="showSection('admin-submissions-section')">🔎 Admin: View Submissions</button>
+
       <button onclick="showSection('simulation-section')">🔧 Simulation</button>
       <button onclick="__signOut()">🚪 Sign out</button>
     </nav>
@@ -48,7 +52,7 @@
     <div id="todo-flyout" class="todo-flyout hidden">
       <div class="todo-head">
         <span>Weekly Tasks</span>
-        <span id="todo-timer" class="todo-timer">00:00:00</span>
+        <!-- countdown removed by request -->
       </div>
       <ul id="todo-list" class="todo-list"></ul>
       <!-- Teacher-only quick add (legacy placeholder – optional) -->
@@ -280,8 +284,8 @@
           </div>
         </section>
 
-        <!-- Admin Approvals -->
-        <section id="admin-approvals-section" class="hidden">
+        <!-- Admin: Approvals -->
+        <section id="admin-approvals-section" class="hidden admin-only">
           <h2>✅ Admin: Approvals</h2>
           <div id="approvals-panel" class="card">
             <p class="muted">Approve students so they can access the site.</p>
@@ -289,8 +293,8 @@
           </div>
         </section>
 
-        <!-- Admin Manage Students (Reset/Delete) -->
-        <section id="admin-manage-section" class="hidden">
+        <!-- Admin: Manage Students (Reset/Delete) -->
+        <section id="admin-manage-section" class="hidden admin-only">
           <h2>🧑‍🏫 Admin: Manage Students</h2>
           <div class="card">
             <p class="muted">Reset clears a student’s attempts/leaderboard & sets them unapproved. Delete removes the user profile (Firestore). Auth account deletion isn’t done here.</p>
@@ -301,6 +305,28 @@
               <table class="progress-table">
                 <thead><tr><th>Display Name</th><th>UID</th><th>Actions</th></tr></thead>
                 <tbody id="admin-students-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- Admin: View Submissions -->
+        <section id="admin-submissions-section" class="hidden admin-only">
+          <h2>🔎 Admin: View Submissions</h2>
+          <div class="card">
+            <div class="attendance-controls">
+              <label for="sub-task-select"><b>Select Task</b></label>
+              <select id="sub-task-select"></select>
+              <button id="sub-refresh">Refresh</button>
+            </div>
+            <div class="table-wrap">
+              <table class="progress-table">
+                <thead>
+                  <tr><th>Student</th><th>Submission</th><th>Score</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="submissions-tbody">
+                  <!-- rows injected by script.js -->
+                </tbody>
               </table>
             </div>
           </div>
