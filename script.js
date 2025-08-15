@@ -487,57 +487,57 @@ function shuffleArray(arr) {
 
 // ---------------- ATTENDANCE ----------------
 (function initAttendance() {
-  const classNoSelect = document.getElementById('attendance-classno');
+  // Admin vs Student containers
+  const adminArea   = document.getElementById('attendance-admin-area');
+  const studentView = document.getElementById('attendance-student-view');
 
-  const histWrap = document.getElementById('attendance-history');
-  const histMeta = document.getElementById('attendance-history-meta');
-  const histBody = document.querySelector('#attendance-history-table tbody');
-
-  const tabTake = document.getElementById('att-tab-take');
+  // Tabs (admin)
+  const tabTake    = document.getElementById('att-tab-take');
   const tabHistory = document.getElementById('att-tab-history');
-  const paneTake = document.getElementById('att-pane-take');
-  const paneHistory = document.getElementById('att-pane-history');
+  const paneTake   = document.getElementById('att-pane-take');
+  const paneHistory= document.getElementById('att-pane-history');
 
   tabTake?.addEventListener('click', () => {
-  tabTake.classList.add('active');
-  tabHistory.classList.remove('active');
-  paneTake.classList.remove('hidden');
-  paneHistory.classList.add('hidden');
+    tabTake.classList.add('active');
+    tabHistory.classList.remove('active');
+    paneTake.classList.remove('hidden');
+    paneHistory.classList.add('hidden');
   });
-
   tabHistory?.addEventListener('click', () => {
-  tabHistory.classList.add('active');
-  tabTake.classList.remove('active');
-  paneHistory.classList.remove('hidden');
-  paneTake.classList.add('hidden');
+    tabHistory.classList.add('active');
+    tabTake.classList.remove('active');
+    paneHistory.classList.remove('hidden');
+    paneTake.classList.add('hidden');
   });
 
-  const dateInput = document.getElementById('attendance-date');
-  const loadBtn = document.getElementById('attendance-load');
-  const tableBody = document.querySelector('#attendance-table tbody');
-  const statusEl = document.getElementById('attendance-status');
-  const noteEl = document.getElementById('attendance-note');
-  const markAllBtn = document.getElementById('attendance-mark-all');
-  const clearAllBtn = document.getElementById('attendance-clear-all');
-  const saveBtn = document.getElementById('attendance-save');
-  const saveStatus = document.getElementById('attendance-save-status');
-  const classNoInput = document.getElementById('attendance-classno');
+  // Admin take-attendance controls
+  const dateInput  = document.getElementById('attendance-date');
+  const classNoSel = document.getElementById('attendance-classno');
+  const loadBtn    = document.getElementById('attendance-load');
+  const tableBody  = document.querySelector('#attendance-table tbody');
+  const statusEl   = document.getElementById('attendance-status');
+  const noteEl     = document.getElementById('attendance-note');
 
-  // NEW: student-only elements and admin containers
-  const adminControls = document.getElementById('attendance-admin-controls');
-  const adminTableWrap = document.getElementById('attendance-admin-table-wrap');
-  const adminActions = document.getElementById('attendance-admin-actions');
-  const studentView = document.getElementById('attendance-student-view');
+  const markAllBtn = document.getElementById('attendance-mark-all');
+  const clearAllBtn= document.getElementById('attendance-clear-all');
+  const saveBtn    = document.getElementById('attendance-save');
+  const saveStatus = document.getElementById('attendance-save-status');
+
+  // Admin history controls
+  const histDateInput = document.getElementById('att-hist-date');
+  const histLoadBtn   = document.getElementById('att-hist-load');
+  const histBody      = document.querySelector('#att-hist-table tbody');
+  const histMeta      = document.getElementById('att-hist-meta');
+
+  // Student table
   const myTableBody = document.querySelector('#my-attendance-table tbody');
 
-  if (!dateInput || !tableBody) return;
-
-  // Default date = today (local)
-  const today = new Date();
-  const yyyy = today.getFullYear();
-  const mm = String(today.getMonth()+1).padStart(2,'0');
-  const dd = String(today.getDate()).padStart(2,'0');
-  dateInput.value = `${yyyy}-${mm}-${dd}`;
+  // Default date (today)
+  if (dateInput) {
+    const t = new Date();
+    const yyyy = t.getFullYear(), mm = String(t.getMonth()+1).padStart(2,'0'), dd = String(t.getDate()).padStart(2,'0');
+    dateInput.value = `${yyyy}-${mm}-${dd}`;
+  }
 
   let students = []; // [{uid, displayName}]
   let stateMap = {}; // uid -> {present:boolean}
@@ -545,60 +545,30 @@ function shuffleArray(arr) {
 
   function setStatus(msg){ if(statusEl) statusEl.textContent = msg || ''; }
   function setSaveStatus(msg){ if(saveStatus) saveStatus.textContent = msg || ''; }
-  function dateKey(){ return dateInput.value; }
+  function dateKey(){ return dateInput?.value || ''; }
 
-  function renderTeacherHistory(meta = {}) {
-  if (!histBody) return;
+  // Admin/student visibility + note
+  function renderNote(){
+    const isAdmin = !!window.__isAdmin;
 
-  // Build rows from current stateMap + students
-  let presentCount = 0;
-  histBody.innerHTML = '';
-  students.forEach(s => {
-    const isPresent = !!(stateMap[s.uid]?.present);
-    if (isPresent) presentCount++;
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${s.displayName || '(Unnamed)'}</td>
-      <td>${isPresent ? 'Present' : 'Absent'}</td>
-    `;
-    histBody.appendChild(tr);
-  });
+    // Toggle containers
+    if (adminArea) adminArea.style.display = isAdmin ? '' : 'none';
+    if (studentView) studentView.classList.toggle('hidden', isAdmin);
 
-  const absentCount = Math.max(0, students.length - presentCount);
-  const classNoTxt = (meta && typeof meta.classNo !== 'undefined' && meta.classNo !== null && meta.classNo !== '')
-    ? `Class No: ${meta.classNo} · `
-    : '';
+    if (noteEl) {
+      noteEl.textContent = isAdmin
+        ? "You are marked as admin. You can edit attendance."
+        : "You are not an admin. Attendance is read-only.";
+    }
 
-  if (histMeta) {
-    histMeta.textContent = `${classNoTxt}Present: ${presentCount} · Absent: ${absentCount} · Total: ${students.length}`;
+    // Disable admin-only controls if not admin
+    [classNoSel, dateInput, histDateInput, markAllBtn, clearAllBtn, saveBtn].forEach(el => {
+      if (el) el.disabled = !isAdmin;
+    });
+
+    // For students, render their own table right away
+    if (!isAdmin) renderMyAttendance();
   }
-
-  // Only show history to admins (just in case)
-  if (histWrap) histWrap.style.display = window.__isAdmin ? '' : 'none';
-  }
-
-  // Renders admin note + toggles visibility for admin vs student
- function renderNote(){
-  const isAdmin = !!window.__isAdmin;
-  if (noteEl) {
-    noteEl.textContent = isAdmin
-      ? "You are marked as admin. You can edit attendance."
-      : "You are not an admin. Attendance is read-only.";
-  }
-  if (markAllBtn) markAllBtn.disabled = !isAdmin;
-  if (clearAllBtn) clearAllBtn.disabled = !isAdmin;
-  if (saveBtn) saveBtn.disabled = !isAdmin;
-  if (classNoSelect) classNoSelect.disabled = !isAdmin;
-
-  const inputs = document.querySelectorAll('.att-present');
-  inputs.forEach(inp => inp.disabled = !isAdmin);
-
-  // History section: visible only to admins
-  if (histWrap) histWrap.style.display = isAdmin ? '' : 'none';
-}
-
-
-  // Expose so outer code can call after role resolves
   window.__att_renderNote = renderNote;
 
   // Build one admin row
@@ -606,6 +576,7 @@ function shuffleArray(arr) {
     const tr = document.createElement('tr');
     const nameTd = document.createElement('td');
     nameTd.textContent = stu.displayName || '(Unnamed)';
+
     const presentTd = document.createElement('td');
     const chk = document.createElement('input');
     chk.type = 'checkbox';
@@ -613,83 +584,84 @@ function shuffleArray(arr) {
     chk.checked = !!(stateMap[stu.uid]?.present);
     chk.onchange = () => { stateMap[stu.uid] = { present: chk.checked, displayName: stu.displayName }; dirty = true; };
     presentTd.appendChild(chk);
+
     tr.append(nameTd, presentTd);
     return tr;
   }
 
+  // Admin: load list + attendance for selected date
   async function loadAttendance(){
-  setStatus('Loading students & attendance…');
-  setSaveStatus('');
-  dirty = false;
-  try {
-    students = await (window.__fb_listStudents ? window.__fb_listStudents() : []);
-    const att = await (window.__fb_getAttendance ? window.__fb_getAttendance(dateKey()) : {});
-    stateMap = {};
-    students.forEach(s => {
-      stateMap[s.uid] = { present: !!(att[s.uid]?.present), displayName: s.displayName || null };
-    });
+    if (!window.__isAdmin) return; // safety
+    if (!dateInput || !tableBody) return;
 
-    // Render admin table (editable)
-    tableBody.innerHTML = '';
-    students.forEach(s => tableBody.appendChild(buildRow(s)));
-    setStatus(`Loaded ${students.length} students.`);
-
-    // Load meta -> set dropdown; if missing, set to blank
-    let meta = {};
+    setStatus('Loading students & attendance…');
+    setSaveStatus('');
+    dirty = false;
     try {
-      meta = await (window.__fb_getAttendanceMeta ? window.__fb_getAttendanceMeta(dateKey()) : {});
-      if (classNoSelect) {
-        const v = (meta.classNo ?? '').toString();
-        classNoSelect.value = v && Array.from(classNoSelect.options).some(o => o.value === v) ? v : '';
+      students = await (window.__fb_listStudents ? window.__fb_listStudents() : []);
+      const att = await (window.__fb_getAttendance ? window.__fb_getAttendance(dateKey()) : {});
+      stateMap = {};
+      students.forEach(s => {
+        stateMap[s.uid] = { present: !!(att[s.uid]?.present), displayName: s.displayName || null };
+      });
+
+      // Render admin table (editable)
+      tableBody.innerHTML = '';
+      students.forEach(s => tableBody.appendChild(buildRow(s)));
+      setStatus(`Loaded ${students.length} students.`);
+
+      // Load meta -> set dropdown
+      try {
+        const meta = await (window.__fb_getAttendanceMeta ? window.__fb_getAttendanceMeta(dateKey()) : {});
+        if (classNoSel) {
+          const v = (meta.classNo ?? '').toString();
+          classNoSel.value = v && Array.from(classNoSel.options).some(o => o.value === v) ? v : '';
+        }
+      } catch (e) {
+        console.warn('getAttendanceMeta failed', e);
+        if (classNoSel) classNoSel.value = '';
       }
-    } catch (e) {
-      console.warn('getAttendanceMeta failed', e);
-      if (classNoSelect) classNoSelect.value = '';
+
+      renderNote();
+    } catch(e){
+      console.error('Attendance load failed:', e);
+      setStatus('Failed to load attendance.');
     }
-
-    // Render teacher history (read-only snapshot for this date)
-    renderTeacherHistory(meta);
-
-    renderNote();
-  } catch(e){
-    console.error('Attendance load failed:', e);
-    setStatus('Failed to load attendance.');
   }
-}
 
-async function loadHistoryAdmin() {
-  const histDateInput = document.getElementById('att-hist-date');
-  const dateKey = histDateInput.value;
-  const histBody = document.querySelector('#att-hist-table tbody');
-  const histMeta = document.getElementById('att-hist-meta');
-  histBody.innerHTML = '<tr><td colspan="2">Loading…</td></tr>';
-  try {
-    const studentsList = await (window.__fb_listStudents ? window.__fb_listStudents() : []);
-    const att = await (window.__fb_getAttendance ? window.__fb_getAttendance(dateKey) : {});
-    let presentCount = 0;
-    histBody.innerHTML = '';
-    studentsList.forEach(s => {
-      const isPresent = !!(att[s.uid]?.present);
-      if (isPresent) presentCount++;
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${s.displayName || '(Unnamed)'}</td><td>${isPresent ? 'Present' : 'Absent'}</td>`;
-      histBody.appendChild(tr);
-    });
-    const absentCount = studentsList.length - presentCount;
-    const meta = await (window.__fb_getAttendanceMeta ? window.__fb_getAttendanceMeta(dateKey) : {});
-    const classNoTxt = meta?.classNo ? `Class No: ${meta.classNo} · ` : '';
-    histMeta.textContent = `${classNoTxt}Present: ${presentCount} · Absent: ${absentCount} · Total: ${studentsList.length}`;
-  } catch (e) {
-    console.error(e);
-    histBody.innerHTML = '<tr><td colspan="2">Failed to load.</td></tr>';
+  // Admin: standalone history loader (by date)
+  async function loadHistoryAdmin() {
+    if (!window.__isAdmin) return;
+    if (!histBody || !histDateInput) return;
+
+    const dkey = histDateInput.value;
+    if (!dkey) { histBody.innerHTML = '<tr><td colspan="2">Pick a date.</td></tr>'; return; }
+
+    histBody.innerHTML = '<tr><td colspan="2">Loading…</td></tr>';
+    try {
+      const studentsList = await (window.__fb_listStudents ? window.__fb_listStudents() : []);
+      const att = await (window.__fb_getAttendance ? window.__fb_getAttendance(dkey) : {});
+
+      let presentCount = 0;
+      histBody.innerHTML = '';
+      studentsList.forEach(s => {
+        const isPresent = !!(att[s.uid]?.present);
+        if (isPresent) presentCount++;
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${s.displayName || '(Unnamed)'}</td><td>${isPresent ? 'Present' : 'Absent'}</td>`;
+        histBody.appendChild(tr);
+      });
+      const absentCount = studentsList.length - presentCount;
+      const meta = await (window.__fb_getAttendanceMeta ? window.__fb_getAttendanceMeta(dkey) : {});
+      const classNoTxt = meta?.classNo ? `Class No: ${meta.classNo} · ` : '';
+      if (histMeta) histMeta.textContent = `${classNoTxt}Present: ${presentCount} · Absent: ${absentCount} · Total: ${studentsList.length}`;
+    } catch (e) {
+      console.error(e);
+      histBody.innerHTML = '<tr><td colspan="2">Failed to load.</td></tr>';
+    }
   }
-}
-document.getElementById('att-hist-load')?.addEventListener('click', loadHistoryAdmin);
 
-
-
-
-  // NEW: Student-only history renderer
+  // Student: read-only history (Date | Class No | Status)
   async function renderMyAttendance() {
     if (!myTableBody) return;
     myTableBody.innerHTML = '<tr><td colspan="3">Loading…</td></tr>';
@@ -715,66 +687,82 @@ document.getElementById('att-hist-load')?.addEventListener('click', loadHistoryA
       myTableBody.innerHTML = '<tr><td colspan="3">Failed to load.</td></tr>';
     }
   }
-  // Expose so outer code can call
   window.__att_renderMyAttendance = renderMyAttendance;
 
-  // Actions (admin)
+  // Admin actions
   loadBtn?.addEventListener('click', loadAttendance);
   dateInput?.addEventListener('change', loadAttendance);
+
   markAllBtn?.addEventListener('click', () => {
+    if (!window.__isAdmin) return;
     students.forEach(s => { stateMap[s.uid] = { present: true, displayName: s.displayName }; });
-    // update checkboxes
     document.querySelectorAll('.att-present').forEach(inp => { inp.checked = true; });
     dirty = true;
   });
   clearAllBtn?.addEventListener('click', () => {
+    if (!window.__isAdmin) return;
     students.forEach(s => { stateMap[s.uid] = { present: false, displayName: s.displayName }; });
     document.querySelectorAll('.att-present').forEach(inp => { inp.checked = false; });
     dirty = true;
   });
+
   saveBtn?.addEventListener('click', async () => {
-  try {
-    // Save Class No meta if selected (admins only by rules)
-    if (classNoSelect && classNoSelect.value !== '') {
-      try {
-        await (window.__fb_setAttendanceMeta
-          ? window.__fb_setAttendanceMeta(dateKey(), Number(classNoSelect.value))
-          : Promise.resolve());
-      } catch (e) {
-        console.warn('setAttendanceMeta failed', e);
-      }
-    }
-
-    // Save attendance rows when changes were made
-    if (dirty) {
-      const records = students.map(s => ({
-        uid: s.uid,
-        present: !!(stateMap[s.uid]?.present),
-        displayName: s.displayName
-      }));
-      await (window.__fb_saveAttendanceBulk
-        ? window.__fb_saveAttendanceBulk(dateKey(), records)
-        : Promise.resolve());
-      dirty = false;
-    }
-
-    // Re-pull meta to refresh history summary (counts & Class No)
+    if (!window.__isAdmin) return;
     try {
-      const meta = await (window.__fb_getAttendanceMeta ? window.__fb_getAttendanceMeta(dateKey()) : {});
-      renderTeacherHistory(meta);
-    } catch {}
+      // Save Class No meta if selected (admins only by rules)
+      if (classNoSel && classNoSel.value !== '') {
+        try {
+          await (window.__fb_setAttendanceMeta
+            ? window.__fb_setAttendanceMeta(dateKey(), Number(classNoSel.value))
+            : Promise.resolve());
+        } catch (e) {
+          console.warn('setAttendanceMeta failed', e);
+        }
+      }
 
-    setSaveStatus('Saved ✔');
-  } catch(e){
-    console.error('Attendance save failed:', e);
-    setSaveStatus('Save failed.');
+      // Save attendance rows when changes were made
+      if (dirty) {
+        const records = students.map(s => ({
+          uid: s.uid,
+          present: !!(stateMap[s.uid]?.present),
+          displayName: s.displayName
+        }));
+        await (window.__fb_saveAttendanceBulk
+          ? window.__fb_saveAttendanceBulk(dateKey(), records)
+          : Promise.resolve());
+        dirty = false;
+      }
+
+      setSaveStatus('Saved ✔');
+    } catch(e){
+      console.error('Attendance save failed:', e);
+      setSaveStatus('Save failed.');
+    }
+  });
+
+  // Initial load (role-aware)
+  if (window.__isAdmin) {
+    loadAttendance();
+  } else {
+    renderMyAttendance();
   }
-});
-
-
-  // Initial admin load (safe even if user is student; admin UI will be hidden)
-  loadAttendance();
 })();
+
+// When admin role resolves in firebase.js, adjust the attendance view immediately
+window.__onAdminStateChanged = function(isAdmin) {
+  if (currentSectionId === 'attendance-section') {
+    if (typeof window.__att_renderNote === 'function') window.__att_renderNote();
+    if (!isAdmin && typeof window.__att_renderMyAttendance === 'function') {
+      window.__att_renderMyAttendance();
+    }
+    if (isAdmin && typeof document !== 'undefined') {
+      // auto-load admin table when promoted to admin
+      const loadBtn = document.getElementById('attendance-load');
+      loadBtn?.click();
+    }
+  }
+};
+
 
 // When admin role resolves in firebase.js, adjust the attendance view immediately
 window.__onAdminStateChanged = function(isAdmin) {
