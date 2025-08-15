@@ -108,32 +108,16 @@ function applyAdminNavVisibility(isAdmin) {
   const sidebar = document.querySelector("nav.sidebar");
   if (!sidebar) return;
 
-  // 1) Hide/show every element marked admin-only (covers static nav + sections)
+  // Show/hide every element marked admin-only (covers static nav + sections)
   document.querySelectorAll('.admin-only').forEach(el => {
     el.style.display = isAdmin ? '' : 'none';
   });
 
-  // 2) Ensure any previously injected submissions button also follows role
+  // If someone previously injected a submissions button, respect role
   const injected = sidebar.querySelector('button[data-nav="admin-submissions-section"]');
   if (injected) injected.style.display = isAdmin ? '' : 'none';
-
-  // 3) Inject the Admin: View Submissions button only if:
-  //    - user is admin, and
-  //    - there is no static or injected button already
-  if (isAdmin) {
-    const alreadyHas = sidebar.querySelector(
-      'button[onclick*="admin-submissions-section"], button[data-nav="admin-submissions-section"]'
-    );
-    if (!alreadyHas) {
-      const subsBtn = document.createElement("button");
-      subsBtn.dataset.nav = "admin-submissions-section";
-      subsBtn.textContent = "📥 Admin: View Submissions";
-      subsBtn.onclick = () => showSection("admin-submissions-section");
-      const insertBefore = sidebar.querySelector('button[onclick*="simulation-section"]') || sidebar.lastElementChild;
-      sidebar.insertBefore(subsBtn, insertBefore);
-    }
-  }
 }
+
 
 
 /* =========================
@@ -837,11 +821,13 @@ function wireAdminSubmissions() {
     document.querySelector(".main-content main")?.appendChild(section);
   }
 
-  const select = $("subs-task-select");
-  const refreshBtn = $("subs-refresh");
-  const tbody = $("subs-tbody");
+  const select = $("sub-task-select") || $("subs-task-select");
+  const refreshBtn = $("sub-refresh") || $("subs-refresh");
+  const tbody = $("submissions-tbody") || $("subs-tbody");
 
   async function loadTasksIntoSelect() {
+    if (!select) return; // <- add this line
+    if (!window.__isAdmin) { select.innerHTML = `<option value="">Admin only</option>`; return; }
     if (!window.__isAdmin) { select.innerHTML = `<option value="">Admin only</option>`; return; }
     try {
       const wk = window.__getISOWeek ? window.__getISOWeek() : undefined;
@@ -860,6 +846,8 @@ function wireAdminSubmissions() {
   }
 
   async function loadSubmissions() {
+    if (!tbody) return; // <- add this line
+    if (!window.__isAdmin) { tbody.innerHTML = '<tr><td colspan="4">Admin only.</td></tr>'; return; }
     if (!window.__isAdmin) { tbody.innerHTML = '<tr><td colspan="4">Admin only.</td></tr>'; return; }
     const taskId = select.value;
     if (!taskId) { tbody.innerHTML = '<tr><td colspan="4">Pick a task.</td></tr>'; return; }
