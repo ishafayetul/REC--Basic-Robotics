@@ -438,15 +438,16 @@ function subscribeAdminSubmissionAlerts(){
 function subscribeCourseLeaderboard() {
   if (!courseLbList) return;
 
-  const cg = collectionGroup(db, 'users'); // 'dailyLeaderboard/{date}/users/{uid}'
+  // Sum across ALL weeklyLeaderboard/{weekKey}/users/{uid} documents
+  const cg = collectionGroup(db, 'users'); // we'll filter to weeklyLeaderboard
   if (unsubOverallLB) unsubOverallLB();
 
   unsubOverallLB = onSnapshot(cg, (ss) => {
     const agg = new Map();
     ss.forEach(docSnap => {
       const usersCol = docSnap.ref.parent;
-      const dateDoc = usersCol ? usersCol.parent : null;
-      if (!dateDoc || (dateDoc.parent && dateDoc.parent.id !== 'dailyLeaderboard')) return;
+      const weekDoc = usersCol ? usersCol.parent : null;
+      if (!weekDoc || (weekDoc.parent && weekDoc.parent.id !== 'weeklyLeaderboard')) return; // ignore non-weekly docs
 
       const d = docSnap.data() || {};
       const uid = d.uid || docSnap.id;
@@ -458,17 +459,21 @@ function subscribeCourseLeaderboard() {
           taskScore: 0,
           attendanceScore: 0,
           examScore: 0,
-          score: 0
+          total: 0,
+          weeks: 0
         });
       }
       const row = agg.get(uid);
-      const practice = (d.jpEnCorrect||0) + (d.enJpCorrect||0) + (d.tasksCompleted||0)*TASK_BONUS;
-      row.practiceScore += practice;
-      row.score         += (d.score||practice);
+      row.practiceScore   += Number(d.practiceScore || 0);
+      row.taskScore       += Number(d.taskScore || 0);
+      row.attendanceScore += Number(d.attendanceScore || 0);
+      row.examScore       += Number(d.examScore || 0);
+      row.total           += Number(d.total || 0);
+      row.weeks++;
       if (d.displayName) row.displayName = d.displayName;
     });
 
-    const rows = [...agg.values()].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 50);
+    const rows = [...agg.values()].sort((a, b) => (b.total || 0) - (a.total || 0)).slice(0, 50);
     courseLbList.innerHTML = '';
     let rank = 1;
     rows.forEach(u => {
@@ -477,13 +482,17 @@ function subscribeCourseLeaderboard() {
         <div class="lb-row">
           <span class="lb-rank">#${rank++}</span>
           <span class="lb-name">${u.displayName || 'Anonymous'}</span>
-          <span class="lb-part">Practice: <b>${u.practiceScore}</b></span>
-          <span class="lb-score">${u.score || 0} pts</span>
+          <span class="lb-part">Practice Σ: <b>${u.practiceScore}</b></span>
+          <span class="lb-part">Tasks Σ: <b>${u.taskScore}</b></span>
+          <span class="lb-part">Attend Σ: <b>${u.attendanceScore}</b></span>
+          <span class="lb-part">Exam Σ: <b>${u.examScore}</b></span>
+          <span class="lb-score">${u.total} pts</span>
         </div>`;
       courseLbList.appendChild(li);
     });
   }, (err) => console.error('[course LB] snapshot error:', err));
 }
+
 
 // Weekly bounds helpers
 function getWeekBounds(d = new Date()) {
@@ -509,7 +518,7 @@ async function buildWeeklyAggregate() {
   const endKey   = ymd(end);
   const weekKey  = getISOWeek(new Date());
 
-  // 1) Practice from dailyLeaderboard within week
+  // 1) Practice (from dailyLeaderboard within the week)
   const agg = new Map(); // uid -> {displayName, practice, tasks, attendance, exam}
   const lbUsers = collectionGroup(db, 'users');
   const lbSnap = await getDocs(lbUsers);
@@ -528,7 +537,7 @@ async function buildWeeklyAggregate() {
     agg.get(uid).practice += (practice + tasksBonus);
   });
 
-  // 2) Task scores from tasks/{weekKey}/items/*/submissions
+  // 2) Task scores (this week's tasks/*/items/*/submissions)
   const taskItems = await getDocs(collection(db,'tasks', weekKey, 'items'));
   for (const it of taskItems.docs) {
     const subs = await getDocs(collection(db,'tasks', weekKey, 'items', it.id, 'submissions'));
@@ -540,7 +549,7 @@ async function buildWeeklyAggregate() {
     });
   }
 
-  // 3) Attendance counts within week (1 point per present)
+  // 3) Attendance (1 point per 'present' day this week)
   const dates = [];
   for (let i=0;i<7;i++){
     const dt = new Date(start); dt.setUTCDate(start.getUTCDate()+i);
@@ -558,7 +567,7 @@ async function buildWeeklyAggregate() {
     });
   }
 
-  // 4) Exam scores (optional) examScores/{weekKey}/users/*
+  // 4) Exam (examScores/{weekKey}/users/*)
   const exSnap = await getDocs(collection(db,'examScores', weekKey, 'users'));
   exSnap.forEach(s => {
     const uid = s.id;
@@ -567,6 +576,7 @@ async function buildWeeklyAggregate() {
     agg.get(uid).exam += Number(data.score || 0);
   });
 
+  // Finalize rows
   const rows = [...agg.entries()].map(([uid, v]) => ({
     uid, displayName: v.displayName,
     practiceScore: v.practice,
@@ -576,8 +586,31 @@ async function buildWeeklyAggregate() {
     total: v.practice + v.tasks + v.attendance + v.exam
   })).sort((a,b)=> b.total - a.total).slice(0, 50);
 
+  // ⬇️ NEW: cache this week's leaderboard to Firestore so Course LB can sum across weeks
+  try {
+    const batch = writeBatch(db);
+    rows.forEach(r => {
+      const ref = doc(db, 'weeklyLeaderboard', weekKey, 'users', r.uid);
+      batch.set(ref, {
+        uid: r.uid,
+        displayName: r.displayName || 'Anonymous',
+        weekKey,
+        practiceScore: r.practiceScore,
+        taskScore: r.taskScore,
+        attendanceScore: r.attendanceScore,
+        examScore: r.examScore,
+        total: r.total,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+    });
+    await batch.commit();
+  } catch (e) {
+    console.warn('[weekly cache] write failed (non-fatal):', e?.message || e);
+  }
+
   return rows;
 }
+
 
 function subscribeWeeklyLeaderboard() {
   if (!weeklyLbList) return;
