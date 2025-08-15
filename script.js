@@ -63,6 +63,7 @@ window.__initAfterLogin = () => {
   wireManageStudents();
   wireAdminSubmissions();
   renderProgress();
+  wireProgressCombined();
   // Hide admin-only nav items for students
   applyAdminNavVisibility(!!window.__isAdmin);
 };
@@ -91,7 +92,12 @@ function showSection(id) {
 
   if (id === "practice") updateDeckProgress();
   if (id === "tasks-section") refreshTasksUI();
-  if (id === "progress-section") renderProgress();
+  if (id === "progress-section") {
+    renderProgress();            // keep the old cards if you want
+    wireProgressCombined();      // new combined 4-column view
+    if (typeof window.__progress_refreshOnShow === 'function') window.__progress_refreshOnShow();
+  }
+
   if (id === "attendance-section") {
     if (typeof window.__att_refreshOnShow === 'function') window.__att_refreshOnShow();
   }
@@ -459,6 +465,158 @@ async function renderProgress() {
     console.warn("renderProgress failed:", e);
   }
 }
+
+/* =========================
+   PROGRESS (combined 4‑column table)
+   ========================= */
+function applyRoleVisibilityForProgress(){
+  const isAdmin = !!window.__isAdmin;
+  $('progress-admin')?.classList.toggle('hidden', !isAdmin);
+  $('progress-student')?.classList.toggle('hidden', isAdmin);
+}
+
+async function listApprovedIntoSelect(selectEl){
+  if (!selectEl) return;
+  selectEl.innerHTML = '<option value="">Loading students…</option>';
+  try{
+    const rows = await (window.__fb_listApprovedStudents ? window.__fb_listApprovedStudents() : []);
+    selectEl.innerHTML = '<option value="">— Select —</option>';
+    rows.forEach(u => {
+      const opt = document.createElement('option');
+      opt.value = u.uid;
+      opt.textContent = u.displayName || u.uid;
+      selectEl.appendChild(opt);
+    });
+  }catch(e){
+    selectEl.innerHTML = '<option value="">Failed to load</option>';
+  }
+}
+
+function fmtPracticeCell(attempt){ // {deckName, correct}
+  if (!attempt) return '';
+  const title = attempt.deckName || 'Lecture';
+  const score = attempt.correct ?? 0;
+  return `${title} (${score})`;
+}
+function fmtTaskCell(row){ // {title,status,score,scoreMax}
+  if (!row) return '';
+  const completed = row.status === 'Submitted' || (row.score ?? null) !== null;
+  const label = (row.score ?? null) !== null && (row.scoreMax ?? null) !== null
+    ? `${row.title} (${row.score}/${row.scoreMax})`
+    : `${row.title} (${completed ? 'Completed' : 'Pending'})`;
+  const cls = completed ? 'status-good' : 'status-bad';
+  return `<span class="${cls}">${label}</span>`;
+}
+function fmtAttendanceCell(row){ // {date,classNo,status}
+  if (!row) return '';
+  const cls = row.status === 'Present' ? 'status-good' : 'status-bad';
+  const classTxt = (row.classNo ?? '—');
+  return `<span class="${cls}">Class No - ${classTxt} (${row.status.toLowerCase()})</span>`;
+}
+function fmtExamCell(score, idx){
+  if (idx > 0) return ''; // only show in the first row
+  return score ? `Exam (${score})` : '';
+}
+
+async function fetchCombinedFor(uid){
+  // Attempts → recent list; we’ll show latest few as "Practice"
+  const attempts = await (window.__fb_fetchAttemptsFor ? window.__fb_fetchAttemptsFor(uid, 10) : []);
+  const practiceRows = attempts.map(a => ({ deckName: a.deckName || 'Lecture', correct: a.correct ?? 0 }));
+
+  // Weekly overview (tasks, attendance, exam)
+  const w = await (window.__fb_fetchWeeklyOverviewFor ? window.__fb_fetchWeeklyOverviewFor(uid) : {tasks:[], attendance:[], exam:0});
+  const taskRows = (w.tasks || []).map(t => ({ title: t.title || 'Task', status: t.status || 'Pending', score: t.score ?? null, scoreMax: t.scoreMax ?? null }));
+  const attRows  = (w.attendance || []).map(a => ({ date: a.date, classNo: a.classNo ?? '—', status: a.status || 'Absent' }));
+  const examScore = w.exam || 0;
+
+  // Build merged table by index
+  const maxLen = Math.max(practiceRows.length, taskRows.length, attRows.length, 1);
+  const rows = [];
+  for (let i=0; i<maxLen; i++){
+    rows.push({
+      practice: practiceRows[i] || null,
+      task: taskRows[i] || null,
+      att: attRows[i] || null,
+      examIdx: i
+    });
+  }
+  return { rows, examScore };
+}
+
+async function renderCombinedTable(tbodyEl, uid){
+  if (!tbodyEl || !uid) return;
+  tbodyEl.innerHTML = `<tr><td colspan="4">Loading…</td></tr>`;
+  try{
+    const { rows, examScore } = await fetchCombinedFor(uid);
+    tbodyEl.innerHTML = '';
+    if (!rows.length){
+      tbodyEl.innerHTML = `<tr><td colspan="4">No data yet.</td></tr>`;
+      return;
+    }
+    rows.forEach((r) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${fmtPracticeCell(r.practice)}</td>
+        <td>${fmtTaskCell(r.task)}</td>
+        <td>${fmtAttendanceCell(r.att)}</td>
+        <td>${fmtExamCell(examScore, r.examIdx)}</td>
+      `;
+      tbodyEl.appendChild(tr);
+    });
+  }catch(e){
+    tbodyEl.innerHTML = `<tr><td colspan="4">Failed to load.</td></tr>`;
+  }
+}
+
+function wireProgressCombined(){
+  applyRoleVisibilityForProgress();
+
+  // ADMIN
+  const sel = $('progress-student-select');
+  const loadBtn = $('progress-load');
+  const statusEl = $('progress-admin-status');
+  const nameEl = $('progress-student-name');
+  const tbodyAdmin = $('progress-admin-tbody');
+
+  if (window.__isAdmin) {
+    listApprovedIntoSelect(sel);
+    if (loadBtn && !loadBtn.dataset.bound) {
+      loadBtn.addEventListener('click', async () => {
+        const uid = sel?.value || '';
+        if (!uid){ statusEl && (statusEl.textContent = 'Pick a student.'); return; }
+        statusEl && (statusEl.textContent = 'Loading…');
+        try {
+          // set name label from option text
+          if (nameEl && sel) nameEl.textContent = sel.options[sel.selectedIndex]?.textContent || uid;
+          await renderCombinedTable(tbodyAdmin, uid);
+          statusEl && (statusEl.textContent = '');
+        } catch {
+          statusEl && (statusEl.textContent = 'Failed to load.');
+        }
+      });
+      loadBtn.dataset.bound = '1';
+    }
+  }
+
+  // STUDENT
+  const tbodyStu = $('progress-stu-tbody');
+  if (!window.__isAdmin) {
+    const uid = (window.__getCurrentUid && window.__getCurrentUid()) || null;
+    if (uid) renderCombinedTable(tbodyStu, uid);
+  }
+}
+
+// Refresh when section is shown
+window.__progress_refreshOnShow = () => {
+  applyRoleVisibilityForProgress();
+  if (window.__isAdmin) {
+    // do nothing until admin picks a student
+  } else {
+    const uid = (window.__getCurrentUid && window.__getCurrentUid()) || null;
+    if (uid) renderCombinedTable($('progress-stu-tbody'), uid);
+  }
+};
+
 window.renderProgress = renderProgress;
 
 /* =========================
@@ -1162,4 +1320,9 @@ window.__onAdminStateChanged = function(isAdmin) {
   if (currentSectionId === 'admin-submissions-section' && typeof window.__subs_refreshOnShow === 'function') {
     window.__subs_refreshOnShow();
   }
+  // Progress refresh (combined view)
+  if (currentSectionId === 'progress-section' && typeof window.__progress_refreshOnShow === 'function') {
+    window.__progress_refreshOnShow();
+  }
+
 };

@@ -698,6 +698,21 @@ window.__fb_fetchAttempts = async function (limitN = 20) {
   return list;
 };
 
+// --- Attempts for ANY user (admin/student by UID) ---
+window.__fb_fetchAttemptsFor = async function (uid, limitN = 20) {
+  if (!uid) return [];
+  const colRef = collection(db, 'users', uid, 'attempts');
+  const qy = query(colRef, orderBy('createdAt', 'desc'), limit(limitN));
+  const snap = await getDocs(qy);
+  const list = [];
+  snap.forEach(docSnap => {
+    const d = docSnap.data() || {};
+    const ts = d.createdAt || (d.createdAtServer?.toMillis ? d.createdAtServer.toMillis() : Date.now());
+    list.push({ id: docSnap.id, ...d, createdAt: ts });
+  });
+  return list;
+};
+
 window.__signOut = () => signOut(auth);
 
 // ---------------- Attendance API ----------------
@@ -854,6 +869,51 @@ window.__fb_fetchWeeklyOverview = async function(){
 };
 
 // -----------------------------
+// Weekly overview (for ANY user by UID)
+// -----------------------------
+window.__fb_fetchWeeklyOverviewFor = async function(uid){
+  if (!uid) return { tasks:[], attendance:[], exam:0 };
+  const wk = getISOWeek(new Date());
+  const { start, end } = getWeekBounds(new Date());
+  const dates = [];
+  for (let i=0; i<7; i++){ const dt = new Date(start); dt.setUTCDate(start.getUTCDate()+i); dates.push(ymd(dt)); }
+
+  // tasks for the selected week
+  const taskRows = [];
+  const items = await getDocs(collection(db,'tasks', wk, 'items'));
+  for (const it of items.docs) {
+    const t = { id: it.id, ...(it.data()||{}) };
+    const sub = await getDoc(doc(db,'tasks', wk, 'items', it.id, 'submissions', uid));
+    const sd = sub.exists() ? sub.data() : null;
+    taskRows.push({
+      title: t.title || '(Untitled)',
+      dueAt: t.dueAt || null,
+      status: sd?.submittedAt ? 'Submitted' : 'Pending',
+      score: sd?.score ?? null,
+      scoreMax: t.scoreMax ?? null
+    });
+  }
+
+  // attendance for the week
+  const attRows = [];
+  for (const d of dates) {
+    const s = await getDoc(doc(db,'attendance', d, 'students', uid));
+    const meta = await getDoc(doc(db,'attendance', d));
+    attRows.push({
+      date: d,
+      classNo: meta.exists() ? (meta.data().classNo ?? null) : null,
+      status: s.exists() && s.data().present ? 'Present' : 'Absent'
+    });
+  }
+
+  // exam score for the week
+  const ex = await getDoc(doc(db,'examScores', wk, 'users', uid));
+  const examScore = ex.exists() ? (ex.data().score || 0) : 0;
+
+  return { tasks: taskRows, attendance: attRows, exam: examScore };
+};
+
+// -----------------------------
 // Admin Reset / Delete a student
 // -----------------------------
 async function __deleteCollectionGroupDocsById(groupName, docId){
@@ -978,3 +1038,6 @@ window.__fb_setExamScore = async function(weekKey, uid, score){
 if (!window.__fb_listStudents) {
   window.__fb_listStudents = window.__fb_listApprovedStudents;
 }
+
+// Small helper: current UID (null if signed-out)
+window.__getCurrentUid = () => (auth.currentUser ? auth.currentUser.uid : null);

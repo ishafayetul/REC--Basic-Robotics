@@ -344,3 +344,7 @@ textarea{ min-height: 90px; resize: vertical; }
   opacity: 0.98;
 }
 .toast b{ font-weight: 700; }
+
+.status-good{ color: var(--green); font-weight: 700; }
+.status-bad{ color: var(--red); font-weight: 700; }
+.cell-dim{ color: var(--muted); }
