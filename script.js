@@ -14,14 +14,14 @@ let masteryMap = JSON.parse(localStorage.getItem("masteryMap") || "{}");
 
 // Session buffer (temporary storage; committed on demand/auto via firebase.js)
 let sessionBuf = JSON.parse(localStorage.getItem("sessionBuf") || "null") || {
-  deckName: "",           // kept for backwards compatibility with firebase.js
-  mode: "mcq",            // single mode for this portal
+  deckName: "",
+  mode: "mcq",
   correct: 0,
   wrong: 0,
   skipped: 0,
   total: 0,
-  jpEnCorrect: 0,         // we will store MCQ corrects here
-  enJpCorrect: 0          // unused for MCQ; always 0
+  jpEnCorrect: 0,
+  enJpCorrect: 0
 };
 
 let currentSectionId = "practice-select";
@@ -70,7 +70,7 @@ async function autoCommitIfNeeded(reason = "") {
       wrong: sessionBuf.wrong,
       skipped: sessionBuf.skipped,
       total: sessionBuf.total,
-      jpEnCorrect: sessionBuf.jpEnCorrect,   // MCQ corrects
+      jpEnCorrect: sessionBuf.jpEnCorrect,
       enJpCorrect: sessionBuf.enJpCorrect
     };
     await window.__fb_commitSession(payload);
@@ -137,6 +137,16 @@ function showSection(id) {
   else console.warn('showSection: no element with id:', id);
 
   currentSectionId = id;
+
+  // Attendance: render appropriate view depending on role
+  if (id === 'attendance-section') {
+    if (window.__isAdmin) {
+      if (typeof window.__att_renderNote === 'function') window.__att_renderNote();
+    } else {
+      if (typeof window.__att_renderMyAttendance === 'function') window.__att_renderMyAttendance();
+      if (typeof window.__att_renderNote === 'function') window.__att_renderNote();
+    }
+  }
 
   if (id === "practice") updateDeckProgress();
 }
@@ -487,6 +497,13 @@ function shuffleArray(arr) {
   const saveBtn = document.getElementById('attendance-save');
   const saveStatus = document.getElementById('attendance-save-status');
 
+  // NEW: student-only elements and admin containers
+  const adminControls = document.getElementById('attendance-admin-controls');
+  const adminTableWrap = document.getElementById('attendance-admin-table-wrap');
+  const adminActions = document.getElementById('attendance-admin-actions');
+  const studentView = document.getElementById('attendance-student-view');
+  const myTableBody = document.querySelector('#my-attendance-table tbody');
+
   if (!dateInput || !tableBody) return;
 
   // Default date = today (local)
@@ -504,20 +521,36 @@ function shuffleArray(arr) {
   function setSaveStatus(msg){ if(saveStatus) saveStatus.textContent = msg || ''; }
   function dateKey(){ return dateInput.value; }
 
+  // Renders admin note + toggles visibility for admin vs student
   function renderNote(){
     const isAdmin = !!window.__isAdmin;
+
     if (noteEl) {
       noteEl.textContent = isAdmin
         ? "You are marked as admin. You can edit attendance."
         : "You are not an admin. Attendance is read-only.";
     }
-    if (markAllBtn) markAllBtn.disabled = !isAdmin;
-    if (clearAllBtn) clearAllBtn.disabled = !isAdmin;
-    if (saveBtn) saveBtn.disabled = !isAdmin;
+
+    // Hide/Show admin interface
+    if (adminControls) adminControls.style.display = isAdmin ? '' : 'none';
+    if (adminTableWrap) adminTableWrap.style.display = isAdmin ? '' : 'none';
+    if (adminActions) adminActions.style.display = isAdmin ? '' : 'none';
+
+    // Student view visible only for non-admins
+    if (studentView) studentView.classList.toggle('hidden', isAdmin);
+
+    // Disable inputs if somehow visible
     const inputs = document.querySelectorAll('.att-present');
     inputs.forEach(inp => inp.disabled = !isAdmin);
+
+    // For students, (re)render their own table
+    if (!isAdmin) renderMyAttendance();
   }
 
+  // Expose so outer code can call after role resolves
+  window.__att_renderNote = renderNote;
+
+  // Build one admin row
   function buildRow(stu){
     const tr = document.createElement('tr');
     const nameTd = document.createElement('td');
@@ -544,7 +577,7 @@ function shuffleArray(arr) {
       students.forEach(s => {
         stateMap[s.uid] = { present: !!(att[s.uid]?.present), displayName: s.displayName || null };
       });
-      // Render table
+      // Render admin table
       tableBody.innerHTML = '';
       students.forEach(s => tableBody.appendChild(buildRow(s)));
       setStatus(`Loaded ${students.length} students.`);
@@ -555,7 +588,36 @@ function shuffleArray(arr) {
     }
   }
 
-  // Actions
+  // NEW: Student-only history renderer
+  async function renderMyAttendance() {
+    if (!myTableBody) return;
+    myTableBody.innerHTML = '<tr><td colspan="3">Loading…</td></tr>';
+    try {
+      const rows = await (window.__fb_getMyAttendanceHistoryWithClass ? window.__fb_getMyAttendanceHistoryWithClass(180) : []);
+      myTableBody.innerHTML = '';
+      if (!rows.length) {
+        myTableBody.innerHTML = '<tr><td colspan="3">No records yet.</td></tr>';
+        return;
+      }
+      rows.forEach(r => {
+        const tr = document.createElement('tr');
+        const status = r.present ? 'Present' : 'Absent';
+        tr.innerHTML = `
+          <td>${r.date}</td>
+          <td>${(r.classNo ?? '—')}</td>
+          <td>${status}</td>
+        `;
+        myTableBody.appendChild(tr);
+      });
+    } catch (e) {
+      console.warn('renderMyAttendance failed:', e);
+      myTableBody.innerHTML = '<tr><td colspan="3">Failed to load.</td></tr>';
+    }
+  }
+  // Expose so outer code can call
+  window.__att_renderMyAttendance = renderMyAttendance;
+
+  // Actions (admin)
   loadBtn?.addEventListener('click', loadAttendance);
   dateInput?.addEventListener('change', loadAttendance);
   markAllBtn?.addEventListener('click', () => {
@@ -582,6 +644,16 @@ function shuffleArray(arr) {
     }
   });
 
-  // Initial load
+  // Initial admin load (safe even if user is student; admin UI will be hidden)
   loadAttendance();
 })();
+
+// When admin role resolves in firebase.js, adjust the attendance view immediately
+window.__onAdminStateChanged = function(isAdmin) {
+  if (currentSectionId === 'attendance-section') {
+    if (typeof window.__att_renderNote === 'function') window.__att_renderNote();
+    if (!isAdmin && typeof window.__att_renderMyAttendance === 'function') {
+      window.__att_renderMyAttendance();
+    }
+  }
+};

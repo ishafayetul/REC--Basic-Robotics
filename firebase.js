@@ -374,7 +374,6 @@ function subscribeWeeklyLeaderboard() {
       const dateDoc = usersCol ? usersCol.parent : null;
       if (!dateDoc || (dateDoc.parent && dateDoc.parent.id !== 'dailyLeaderboard')) return;
       const parentDateId = dateDoc.id; // 'YYYY-MM-DD'
- // 'YYYY-MM-DD'
       if (parentDateId < startKey || parentDateId > endKey) return; // outside this week
 
       const d = docSnap.data() || {};
@@ -601,7 +600,8 @@ window.__fb_getMyAttendanceHistoryWithClass = async function(limitN = 180){
         const dateDoc = docSnap.ref.parent ? docSnap.ref.parent.parent : null;
         if (dateDoc && dateDoc.id) {
           const d = docSnap.data() || {};
-          all.append({ date: dateDoc.id, present: !!d.present });
+          // FIX: append -> push
+          all.push({ date: dateDoc.id, present: !!d.present });
         }
       }
     });

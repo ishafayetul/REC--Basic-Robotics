@@ -140,59 +140,55 @@
           </a>
         </section>
 
-        
-        
-<!-- Attendance -->
-<section id="attendance-section" class="hidden">
-  <h2>🗒️ Attendance</h2>
-  <!-- Admin controls -->
-  <div id="attendance-admin-controls" class="attendance-controls">
-    <label for="attendance-date"><b>Date</b></label>
-    <input type="date" id="attendance-date" />
-    <label for="attendance-classno"><b>Class No</b></label>
-    <input type="number" id="attendance-classno" min="1" step="1" style="max-width:120px;" />
-    <button id="attendance-load">Load</button>
-    <span id="attendance-status" class="muted"></span>
-  </div>
-  <div id="attendance-admin-table-wrap" class="table-wrap">
-    <table id="attendance-table" class="progress-table">
-      <thead>
-        <tr>
-          <th style="min-width:220px;">Student</th>
-          <th>Present?</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-  </div>
-  <div id="attendance-admin-actions" class="attendance-actions">
-    <button id="attendance-mark-all">Mark All Present</button>
-    <button id="attendance-clear-all">Clear All</button>
-    <button id="attendance-save">Save Changes</button>
-    <span id="attendance-save-status" class="muted"></span>
-  </div>
-  <p class="muted" id="attendance-note"></p>
+        <!-- Attendance -->
+        <section id="attendance-section" class="hidden">
+          <h2>🗒️ Attendance</h2>
+          <!-- Admin controls -->
+          <div id="attendance-admin-controls" class="attendance-controls">
+            <label for="attendance-date"><b>Date</b></label>
+            <input type="date" id="attendance-date" />
+            <label for="attendance-classno"><b>Class No</b></label>
+            <input type="number" id="attendance-classno" min="1" step="1" style="max-width:120px;" />
+            <button id="attendance-load">Load</button>
+            <span id="attendance-status" class="muted"></span>
+          </div>
+          <div id="attendance-admin-table-wrap" class="table-wrap">
+            <table id="attendance-table" class="progress-table">
+              <thead>
+                <tr>
+                  <th style="min-width:220px;">Student</th>
+                  <th>Present?</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="attendance-admin-actions" class="attendance-actions">
+            <button id="attendance-mark-all">Mark All Present</button>
+            <button id="attendance-clear-all">Clear All</button>
+            <button id="attendance-save">Save Changes</button>
+            <span id="attendance-save-status" class="muted"></span>
+          </div>
+          <p class="muted" id="attendance-note"></p>
 
-  <!-- Student-only view -->
-  <div id="attendance-student-view" class="hidden">
-    <h3>Your Attendance History</h3>
-    <div class="table-wrap">
-      <table class="progress-table" id="my-attendance-table">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Class No</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </div>
-    <p class="muted">Only you can see your own records. Admins can manage class attendance.</p>
-  </div>
-</section>
-
-    
+          <!-- Student-only view -->
+          <div id="attendance-student-view" class="hidden">
+            <h3>Your Attendance History</h3>
+            <div class="table-wrap">
+              <table class="progress-table" id="my-attendance-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Class No</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <p class="muted">Only you can see your own records. Admins can manage class attendance.</p>
+          </div>
+        </section>
 
         <!-- Mistakes -->
         <section id="mistakes-section" class="hidden">
