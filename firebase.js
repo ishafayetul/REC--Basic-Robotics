@@ -171,10 +171,11 @@ onAuthStateChanged(auth, async (user) => {
 // APPROVAL API (Admin)
 // -----------------------------
 window.__fb_listPending = async function () {
-  const qy = query(collection(db, 'users'), where('approved','==', false), orderBy('displayName'));
+  const qy = query(collection(db, 'users'), where('approved','==', false));
   const snap = await getDocs(qy);
   const rows = [];
   snap.forEach(d => rows.push({ uid: d.id, ...(d.data()||{}) }));
+  rows.sort((a,b) => (a.displayName||'').localeCompare(b.displayName||''));
   return rows;
 };
 window.__fb_approveUser = async function (uid) {

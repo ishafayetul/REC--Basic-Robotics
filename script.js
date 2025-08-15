@@ -471,9 +471,11 @@ function wireApprovals() {
         listEl.appendChild(row);
       });
     } catch (e) {
-      listEl.innerHTML = '<div class="muted">Failed to load.</div>';
-      console.error(e);
-    }
+        console.error(e);
+        const msg = (e && e.message) ? e.message : 'Failed to load.';
+        listEl.innerHTML = `<div class="muted">${msg}</div>`;
+      }
+
   }
 
   // auto-refresh whenever section is shown
