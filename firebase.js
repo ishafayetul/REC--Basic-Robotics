@@ -787,15 +787,23 @@ async function __deleteSubcollectionDocs(userUid, subpath){
 
 window.__fb_adminResetUser = async function(uid){
   // Clears attempts, daily docs, dailyLeaderboard rows. Sets approved:false.
-  // (Auth delete is not possible here.)
   await __deleteSubcollectionDocs(uid, 'attempts');
   await __deleteSubcollectionDocs(uid, 'daily');
-  // delete in dailyLeaderboard/*/users/{uid}
+
+  // NEW: delete all task submissions by this user (any week, any task)
+  await __deleteCollectionGroupDocsById('submissions', uid);
+
+  // NEW: delete all attendance rows for this user across all dates
+  await __deleteCollectionGroupDocsById('students', uid);
+
+  // delete in dailyLeaderboard/*/users/{uid} AND examScores/*/users/{uid}
   await __deleteCollectionGroupDocsById('users', uid);
+
   // flip approved off
   await setDoc(doc(db,'users',uid), { approved: false, updatedAt: serverTimestamp() }, { merge: true });
   return true;
 };
+
 window.__fb_adminDeleteUser = async function(uid){
   await window.__fb_adminResetUser(uid);
   // Finally remove the user profile doc

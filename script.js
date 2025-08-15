@@ -107,30 +107,34 @@ window.showSection = showSection;
 function applyAdminNavVisibility(isAdmin) {
   const sidebar = document.querySelector("nav.sidebar");
   if (!sidebar) return;
-  // Buttons are defined in HTML; we'll hide admin ones for students
-  // Admin buttons have these targets in your HTML. 
-  const adminBtns = [
-    "admin-approvals-section",
-    "admin-manage-section",
-    "admin-submissions-section" // injected button id below
-  ];
-  // Inject "Admin: View Submissions" button when admin
-  let subsBtn = sidebar.querySelector('button[data-nav="admin-submissions-section"]');
-  if (isAdmin && !subsBtn) {
-    subsBtn = document.createElement("button");
-    subsBtn.dataset.nav = "admin-submissions-section";
-    subsBtn.textContent = "📥 Admin: View Submissions";
-    subsBtn.onclick = () => showSection("admin-submissions-section");
-    sidebar.insertBefore(subsBtn, sidebar.querySelector('button[onclick*="simulation-section"]') || sidebar.lastElementChild);
-  }
-  // Toggle visibility
-  adminBtns.forEach(id => {
-    const btn = id === "admin-submissions-section"
-      ? sidebar.querySelector('button[data-nav="admin-submissions-section"]')
-      : sidebar.querySelector(`button[onclick*="${id}"]`);
-    if (btn) btn.style.display = isAdmin ? "" : "none";
+
+  // 1) Hide/show every element marked admin-only (covers static nav + sections)
+  document.querySelectorAll('.admin-only').forEach(el => {
+    el.style.display = isAdmin ? '' : 'none';
   });
+
+  // 2) Ensure any previously injected submissions button also follows role
+  const injected = sidebar.querySelector('button[data-nav="admin-submissions-section"]');
+  if (injected) injected.style.display = isAdmin ? '' : 'none';
+
+  // 3) Inject the Admin: View Submissions button only if:
+  //    - user is admin, and
+  //    - there is no static or injected button already
+  if (isAdmin) {
+    const alreadyHas = sidebar.querySelector(
+      'button[onclick*="admin-submissions-section"], button[data-nav="admin-submissions-section"]'
+    );
+    if (!alreadyHas) {
+      const subsBtn = document.createElement("button");
+      subsBtn.dataset.nav = "admin-submissions-section";
+      subsBtn.textContent = "📥 Admin: View Submissions";
+      subsBtn.onclick = () => showSection("admin-submissions-section");
+      const insertBefore = sidebar.querySelector('button[onclick*="simulation-section"]') || sidebar.lastElementChild;
+      sidebar.insertBefore(subsBtn, insertBefore);
+    }
+  }
 }
+
 
 /* =========================
    PRACTICE (MCQ)
