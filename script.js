@@ -892,6 +892,18 @@ function wireAdminSubmissions() {
   if (select && !select.dataset.bound) { select.addEventListener('change', loadSubmissions); select.dataset.bound = "1"; }
 
   // Expose helpers for deep-linking from Tasks
+  // Simple toast popup for notifications
+  window.showToast = function(msg, timeoutMs = 5000){
+    const cont = document.getElementById('toast-container');
+    if (!cont) return alert(msg); // fallback
+    const div = document.createElement('div');
+    div.className = 'toast';
+    div.textContent = msg;
+    cont.appendChild(div);
+    setTimeout(() => { div.style.opacity = '0'; div.style.transform = 'translateY(-4px)'; }, timeoutMs - 400);
+    setTimeout(() => { cont.removeChild(div); }, timeoutMs);
+  };
+
   window.__subs_refreshOnShow = async () => {
     applyAdminNavVisibility(!!window.__isAdmin);
     await loadTasksIntoSelect();

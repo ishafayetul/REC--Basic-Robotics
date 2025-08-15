@@ -135,20 +135,35 @@ onAuthStateChanged(auth, async (user) => {
         return;
       }
 
-      // Normal app view
+            // Normal app view
       approvalGate?.classList.add('hidden'); if (approvalGate) approvalGate.style.display = 'none';
       gate?.classList.add('hidden'); if (gate) gate.style.display = 'none';
       appRoot?.classList.remove('hidden'); if (appRoot) appRoot.style.display = 'block';
-      todoFlyout?.classList.remove('hidden'); if (todoFlyout) todoFlyout.style.display = '';
+
+      // SHOW/HIDE Weekly Tasks flyout based on role:
+      if (window.__isAdmin) {
+        // Admin: HIDE weekly tasks flyout
+        todoFlyout?.classList.add('hidden'); if (todoFlyout) todoFlyout.style.display = 'none';
+      } else {
+        // Student: SHOW weekly tasks flyout + subscribe
+        todoFlyout?.classList.remove('hidden'); if (todoFlyout) todoFlyout.style.display = '';
+        subscribeWeeklyTaskFlyout(user.uid);
+      }
 
       if (adminRow) adminRow.classList.toggle('hidden', !isAdmin);
       try { window.__onAdminStateChanged && window.__onAdminStateChanged(window.__isAdmin); } catch {}
 
       // (Removed startCountdown(); timer is hidden and not running)
 
-      subscribeWeeklyTaskFlyout(user.uid);
+      // Subscribe leaderboards as before
       if (weeklyLbList) subscribeWeeklyLeaderboard();
       if (courseLbList) subscribeCourseLeaderboard();
+
+      if (window.__isAdmin) {
+        // Start admin notifications
+        try { subscribeAdminApprovalAlerts(); } catch(e){ console.warn('approval alerts', e); }
+        try { subscribeAdminSubmissionAlerts(); } catch(e){ console.warn('submission alerts', e); }
+      }
 
       // Auto-commit any pending session stored locally (from last close)
       try { await __fb_commitLocalPendingSession(); } catch (e) { console.warn('[pending-session] commit skipped:', e?.message || e); }
@@ -163,6 +178,14 @@ onAuthStateChanged(auth, async (user) => {
 
       if (unsubWeeklyLB) { unsubWeeklyLB(); unsubWeeklyLB = null; }
       if (unsubOverallLB) { unsubOverallLB(); unsubOverallLB = null; }
+
+            // stop admin listeners
+      if (unsubApprovalAlert) { unsubApprovalAlert(); unsubApprovalAlert = null; }
+      if (unsubTaskItems) { unsubTaskItems(); unsubTaskItems = null; }
+      Object.values(unsubPerTaskSubs).forEach(fn => { try{ fn(); }catch{} });
+      unsubPerTaskSubs = {};
+      seenSubmissionDocIds.clear();
+
     }
   } catch (err) {
     console.error('[auth] onAuthStateChanged handler error:', err);
@@ -338,6 +361,80 @@ async function subscribeWeeklyTaskFlyout(uid) {
 // ------------------------------
 // Leaderboards
 // ------------------------------
+
+// --- Admin notifications ---
+let unsubApprovalAlert = null;
+let unsubTaskItems = null;
+let unsubPerTaskSubs = {}; // taskId -> unsubscribe
+let seenSubmissionDocIds = new Set();
+
+function subscribeAdminApprovalAlerts(){
+  if (unsubApprovalAlert) unsubApprovalAlert(); // reset
+  let prevCount = null;
+  const qy = query(collection(db, 'users'), where('approved','==', false));
+  unsubApprovalAlert = onSnapshot(qy, (ss) => {
+    const count = ss.size;
+    if (prevCount === null) { prevCount = count; return; } // ignore first load
+    if (count > prevCount) {
+      const msg = `${count} student${count>1?'s':''} waiting for approval`;
+      try { window.showToast && window.showToast(msg); } catch {}
+    }
+    prevCount = count;
+  });
+}
+
+function subscribeAdminSubmissionAlerts(){
+  // Clean existing
+  if (unsubTaskItems) { unsubTaskItems(); unsubTaskItems = null; }
+  Object.values(unsubPerTaskSubs).forEach(fn => { try{ fn(); }catch{} });
+  unsubPerTaskSubs = {};
+  seenSubmissionDocIds.clear();
+
+  const wk = getISOWeek(new Date());
+  // Watch tasks for this week, then watch each task's submissions
+  const itemsRef = collection(db, 'tasks', wk, 'items');
+  unsubTaskItems = onSnapshot(itemsRef, (itemsSnap) => {
+    // Setup listeners for each task
+    itemsSnap.forEach(itemDoc => {
+      const taskId = itemDoc.id;
+      if (unsubPerTaskSubs[taskId]) return; // already listening
+
+      let firstLoad = true;
+      const subsRef = collection(db, 'tasks', wk, 'items', taskId, 'submissions');
+      unsubPerTaskSubs[taskId] = onSnapshot(subsRef, (subsSnap) => {
+        const changes = subsSnap.docChanges();
+        changes.forEach(ch => {
+          if (ch.type === 'added') {
+            const docId = `${taskId}/${ch.doc.id}`;
+            if (firstLoad) { // don't spam for existing docs
+              seenSubmissionDocIds.add(docId);
+              return;
+            }
+            if (seenSubmissionDocIds.has(docId)) return;
+            seenSubmissionDocIds.add(docId);
+
+            const d = ch.doc.data() || {};
+            const who = d.displayName || ch.doc.id;
+            const title = (itemDoc.data()||{}).title || '(Untitled task)';
+            const msg = `New submission: ${who} → ${title}`;
+            try { window.showToast && window.showToast(msg); } catch {}
+          }
+        });
+        firstLoad = false;
+      }, (err) => console.warn('[submissions alert] error:', err));
+    });
+
+    // Cleanup listeners for tasks that no longer exist
+    const liveIds = new Set(itemsSnap.docs.map(d=>d.id));
+    Object.keys(unsubPerTaskSubs).forEach(taskId => {
+      if (!liveIds.has(taskId)) {
+        try { unsubPerTaskSubs[taskId](); } catch {}
+        delete unsubPerTaskSubs[taskId];
+      }
+    });
+  }, (err) => console.warn('[task items alert] error:', err));
+}
+
 function subscribeCourseLeaderboard() {
   if (!courseLbList) return;
 
