@@ -487,6 +487,12 @@ function shuffleArray(arr) {
 
 // ---------------- ATTENDANCE ----------------
 (function initAttendance() {
+  const classNoSelect = document.getElementById('attendance-classno');
+
+  const histWrap = document.getElementById('attendance-history');
+  const histMeta = document.getElementById('attendance-history-meta');
+  const histBody = document.querySelector('#attendance-history-table tbody');
+
   const dateInput = document.getElementById('attendance-date');
   const loadBtn = document.getElementById('attendance-load');
   const tableBody = document.querySelector('#attendance-table tbody');
@@ -522,31 +528,56 @@ function shuffleArray(arr) {
   function setSaveStatus(msg){ if(saveStatus) saveStatus.textContent = msg || ''; }
   function dateKey(){ return dateInput.value; }
 
-  // Renders admin note + toggles visibility for admin vs student
-  function renderNote(){
-    const isAdmin = !!window.__isAdmin;
+  function renderTeacherHistory(meta = {}) {
+  if (!histBody) return;
 
-    if (noteEl) {
-      noteEl.textContent = isAdmin
-        ? "You are marked as admin. You can edit attendance."
-        : "You are not an admin. Attendance is read-only.";
-    }
+  // Build rows from current stateMap + students
+  let presentCount = 0;
+  histBody.innerHTML = '';
+  students.forEach(s => {
+    const isPresent = !!(stateMap[s.uid]?.present);
+    if (isPresent) presentCount++;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${s.displayName || '(Unnamed)'}</td>
+      <td>${isPresent ? 'Present' : 'Absent'}</td>
+    `;
+    histBody.appendChild(tr);
+  });
 
-    // Hide/Show admin interface
-    if (adminControls) adminControls.style.display = isAdmin ? '' : 'none';
-    if (adminTableWrap) adminTableWrap.style.display = isAdmin ? '' : 'none';
-    if (adminActions) adminActions.style.display = isAdmin ? '' : 'none';
+  const absentCount = Math.max(0, students.length - presentCount);
+  const classNoTxt = (meta && typeof meta.classNo !== 'undefined' && meta.classNo !== null && meta.classNo !== '')
+    ? `Class No: ${meta.classNo} · `
+    : '';
 
-    // Student view visible only for non-admins
-    if (studentView) studentView.classList.toggle('hidden', isAdmin);
-
-    // Disable inputs if somehow visible
-    const inputs = document.querySelectorAll('.att-present');
-    inputs.forEach(inp => inp.disabled = !isAdmin);
-
-    // For students, (re)render their own table
-    if (!isAdmin) renderMyAttendance();
+  if (histMeta) {
+    histMeta.textContent = `${classNoTxt}Present: ${presentCount} · Absent: ${absentCount} · Total: ${students.length}`;
   }
+
+  // Only show history to admins (just in case)
+  if (histWrap) histWrap.style.display = window.__isAdmin ? '' : 'none';
+  }
+
+  // Renders admin note + toggles visibility for admin vs student
+ function renderNote(){
+  const isAdmin = !!window.__isAdmin;
+  if (noteEl) {
+    noteEl.textContent = isAdmin
+      ? "You are marked as admin. You can edit attendance."
+      : "You are not an admin. Attendance is read-only.";
+  }
+  if (markAllBtn) markAllBtn.disabled = !isAdmin;
+  if (clearAllBtn) clearAllBtn.disabled = !isAdmin;
+  if (saveBtn) saveBtn.disabled = !isAdmin;
+  if (classNoSelect) classNoSelect.disabled = !isAdmin;
+
+  const inputs = document.querySelectorAll('.att-present');
+  inputs.forEach(inp => inp.disabled = !isAdmin);
+
+  // History section: visible only to admins
+  if (histWrap) histWrap.style.display = isAdmin ? '' : 'none';
+}
+
 
   // Expose so outer code can call after role resolves
   window.__att_renderNote = renderNote;
@@ -574,32 +605,39 @@ function shuffleArray(arr) {
   try {
     students = await (window.__fb_listStudents ? window.__fb_listStudents() : []);
     const att = await (window.__fb_getAttendance ? window.__fb_getAttendance(dateKey()) : {});
-
     stateMap = {};
     students.forEach(s => {
       stateMap[s.uid] = { present: !!(att[s.uid]?.present), displayName: s.displayName || null };
     });
 
-    // Render admin table
+    // Render admin table (editable)
     tableBody.innerHTML = '';
     students.forEach(s => tableBody.appendChild(buildRow(s)));
     setStatus(`Loaded ${students.length} students.`);
 
-    // Load Class No meta and show in the input box
+    // Load meta -> set dropdown; if missing, set to blank
+    let meta = {};
     try {
-      const meta = await (window.__fb_getAttendanceMeta ? window.__fb_getAttendanceMeta(dateKey()) : {});
-      if (classNoInput) classNoInput.value = (meta.classNo ?? '');
+      meta = await (window.__fb_getAttendanceMeta ? window.__fb_getAttendanceMeta(dateKey()) : {});
+      if (classNoSelect) {
+        const v = (meta.classNo ?? '').toString();
+        classNoSelect.value = v && Array.from(classNoSelect.options).some(o => o.value === v) ? v : '';
+      }
     } catch (e) {
       console.warn('getAttendanceMeta failed', e);
-      if (classNoInput) classNoInput.value = '';
+      if (classNoSelect) classNoSelect.value = '';
     }
+
+    // Render teacher history (read-only snapshot for this date)
+    renderTeacherHistory(meta);
 
     renderNote();
   } catch(e){
     console.error('Attendance load failed:', e);
     setStatus('Failed to load attendance.');
   }
-  }
+}
+
 
 
   // NEW: Student-only history renderer
@@ -647,36 +685,43 @@ function shuffleArray(arr) {
   });
   saveBtn?.addEventListener('click', async () => {
   try {
-    // Always try to save Class No if present (admins only by rules)
-    if (classNoInput && classNoInput.value !== '') {
+    // Save Class No meta if selected (admins only by rules)
+    if (classNoSelect && classNoSelect.value !== '') {
       try {
         await (window.__fb_setAttendanceMeta
-          ? window.__fb_setAttendanceMeta(dateKey(), Number(classNoInput.value))
+          ? window.__fb_setAttendanceMeta(dateKey(), Number(classNoSelect.value))
           : Promise.resolve());
       } catch (e) {
         console.warn('setAttendanceMeta failed', e);
       }
     }
 
-    // Only save attendance rows when there are changes
-    if (!dirty) { setSaveStatus('Saved Class No. No attendance changes.'); return; }
+    // Save attendance rows when changes were made
+    if (dirty) {
+      const records = students.map(s => ({
+        uid: s.uid,
+        present: !!(stateMap[s.uid]?.present),
+        displayName: s.displayName
+      }));
+      await (window.__fb_saveAttendanceBulk
+        ? window.__fb_saveAttendanceBulk(dateKey(), records)
+        : Promise.resolve());
+      dirty = false;
+    }
 
-    const records = students.map(s => ({
-      uid: s.uid,
-      present: !!(stateMap[s.uid]?.present),
-      displayName: s.displayName
-    }));
-    await (window.__fb_saveAttendanceBulk
-      ? window.__fb_saveAttendanceBulk(dateKey(), records)
-      : Promise.resolve());
+    // Re-pull meta to refresh history summary (counts & Class No)
+    try {
+      const meta = await (window.__fb_getAttendanceMeta ? window.__fb_getAttendanceMeta(dateKey()) : {});
+      renderTeacherHistory(meta);
+    } catch {}
 
     setSaveStatus('Saved ✔');
-    dirty = false;
   } catch(e){
     console.error('Attendance save failed:', e);
     setSaveStatus('Save failed.');
   }
 });
+
 
   // Initial admin load (safe even if user is student; admin UI will be hidden)
   loadAttendance();
