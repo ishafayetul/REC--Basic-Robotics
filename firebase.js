@@ -290,6 +290,11 @@ function subscribeCourseLeaderboard() {
   unsubOverallLB = onSnapshot(cg, (ss) => {
     const agg = new Map();
     ss.forEach(docSnap => {
+      // Only include docs under dailyLeaderboard/{date}/users/{uid}
+      const usersCol = docSnap.ref.parent;
+      const dateDoc = usersCol ? usersCol.parent : null;
+      if (!dateDoc || (dateDoc.parent && dateDoc.parent.id !== 'dailyLeaderboard')) return;
+
       const d = docSnap.data() || {};
       const uid = d.uid || docSnap.id;
       if (!agg.has(uid)) {
@@ -363,8 +368,12 @@ function subscribeWeeklyLeaderboard() {
   unsubWeeklyLB = onSnapshot(cg, (ss) => {
     const agg = new Map();
     ss.forEach(docSnap => {
-      // Parent path: dailyLeaderboard/{date}/users/{uid}
-      const parentDateId = docSnap.ref.parent.parent.id; // 'YYYY-MM-DD'
+      // Only include docs under dailyLeaderboard/{date}/users/{uid}
+      const usersCol = docSnap.ref.parent;
+      const dateDoc = usersCol ? usersCol.parent : null;
+      if (!dateDoc || (dateDoc.parent && dateDoc.parent.id !== 'dailyLeaderboard')) return;
+      const parentDateId = dateDoc.id; // 'YYYY-MM-DD'
+ // 'YYYY-MM-DD'
       if (parentDateId < startKey || parentDateId > endKey) return; // outside this week
 
       const d = docSnap.data() || {};
@@ -556,4 +565,59 @@ window.__fb_saveAttendanceBulk = async function (dateKey, records) {
     }, { merge: true });
   });
   await batch.commit();
+};
+
+
+// --- Attendance meta (Class No) ---
+window.__fb_getAttendanceMeta = async function(dateKey){
+  try{
+    const ref = doc(db, 'attendance', dateKey);
+    const snap = await getDoc(ref);
+    return snap.exists() ? snap.data() : {};
+  }catch(e){ console.warn('getAttendanceMeta failed', e); return {}; }
+};
+window.__fb_setAttendanceMeta = async function(dateKey, classNo){
+  try{
+    await setDoc(doc(db, 'attendance', dateKey), { classNo: classNo, updatedAt: serverTimestamp() }, { merge: true });
+  }catch(e){ console.warn('setAttendanceMeta failed', e); throw e; }
+};
+
+// --- Student-only history: Date, Class No, Present/Absent ---
+window.__fb_getMyAttendanceHistoryWithClass = async function(limitN = 180){
+  const user = auth.currentUser;
+  if (!user) return [];
+  // Find all attendance docs for this uid
+  const cg = collectionGroup(db, 'students');
+  // No direct documentId() filter in this environment; fetch and filter client-side
+  const snaps = await getDocs(cg);
+  const mine = [];
+  snaps.forEach(docSnap => {
+    if (docSnap.id === user.uid) {
+      const parentDateId = docSnap.ref.parent.parent.id; // attendance/{date}/students/{uid}
+      const d = docSnap.data() || {};
+      mine.push({ date: parentDateId, present: !!d.present });
+    }
+  });
+  // Sort by date desc
+  mine.sort((a,b) => a.date > b.date ? -1 : a.date < b.date ? 1 : 0);
+  const top = mine.slice(0, limitN);
+  // Fetch classNo per date
+  const results = [];
+  for (const row of top) {
+    try{
+      const msnap = await getDoc(doc(db, 'attendance', row.date));
+      const classNo = msnap.exists() ? msnap.data().classNo : undefined;
+      //
+    }catch{}
+  }
+  const out = [];
+  for (const row of top) {
+    let classNo = undefined;
+    try{
+      const msnap = await getDoc(doc(db, 'attendance', row.date));
+      classNo = msnap.exists() ? msnap.data().classNo : undefined;
+    }catch(e){}
+    out.push({ date: row.date, classNo, present: row.present });
+  }
+  return out;
 };
