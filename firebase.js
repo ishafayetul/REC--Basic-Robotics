@@ -883,16 +883,25 @@ window.__fb_fetchWeeklyOverview = async function(){
   }
 
   // attendance
+  // --- attendance (only include dates that actually exist in DB)
   const attRows = [];
   for (const d of dates) {
-    const s = await getDoc(doc(db,'attendance', d, 'students', user.uid));
-    const meta = await getDoc(doc(db,'attendance', d));
+    // fetch student row + meta (classNo) together
+    const [s, meta] = await Promise.all([
+      getDoc(doc(db,'attendance', d, 'students', user ? user.uid : uid)), // in __fb_fetchWeeklyOverview use user.uid; in __fb_fetchWeeklyOverviewFor use uid
+      getDoc(doc(db,'attendance', d))
+    ]);
+
+    // If neither a student row nor a meta doc exists, skip this day entirely
+    if (!s.exists() && !meta.exists()) continue;
+
     attRows.push({
       date: d,
       classNo: meta.exists() ? (meta.data().classNo ?? null) : null,
       status: s.exists() && s.data().present ? 'Present' : 'Absent'
     });
   }
+
 
   // exam
   const ex = await getDoc(doc(db,'examScores', wk, 'users', user.uid));
@@ -928,16 +937,21 @@ window.__fb_fetchWeeklyOverviewFor = async function(uid){
   }
 
   // attendance for the week
+  // attendance for the week
   const attRows = [];
   for (const d of dates) {
-    const s = await getDoc(doc(db,'attendance', d, 'students', uid));
-    const meta = await getDoc(doc(db,'attendance', d));
+    const [s, meta] = await Promise.all([
+      getDoc(doc(db,'attendance', d, 'students', uid)),
+      getDoc(doc(db,'attendance', d))
+    ]);
+    if (!s.exists() && !meta.exists()) continue;
     attRows.push({
       date: d,
       classNo: meta.exists() ? (meta.data().classNo ?? null) : null,
       status: s.exists() && s.data().present ? 'Present' : 'Absent'
     });
   }
+
 
   // exam score for the week
   const ex = await getDoc(doc(db,'examScores', wk, 'users', uid));
