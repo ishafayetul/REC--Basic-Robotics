@@ -1012,6 +1012,32 @@ window.__fb_adminWipeAll = async function(){
       await deleteDoc(d.ref);
     }
   }
+    // 3b) (Legacy) OVERALL LEADERBOARD: overallLeaderboard/users/*
+  try {
+    const overall = await getDocs(collection(db, 'overallLeaderboard'));
+    for (const docSnap of overall.docs) {
+      // if your overall LB is a flat collection of users:
+      await deleteDoc(docSnap.ref);
+      // If it’s namespaced like overallLeaderboard/{something}/users/*, use:
+      // await deleteAllDocs(collection(db, 'overallLeaderboard', docSnap.id, 'users'));
+      // await deleteDoc(docSnap.ref);
+    }
+  } catch (e) {
+    console.warn('[wipe] overallLeaderboard not found or different shape:', e?.message || e);
+  }
+
+  // 3c) (Optional/Legacy) WEEKLY LB cache collections if any (e.g., weeklyLeaderboard/*/users/*)
+  try {
+    const weeksAgg = await getDocs(collection(db, 'weeklyLeaderboard'));
+    for (const wk of weeksAgg.docs) {
+      await deleteAllDocs(collection(db, 'weeklyLeaderboard', wk.id, 'users'));
+      await deleteDoc(wk.ref);
+    }
+  } catch (e) {
+    // If the collection doesn't exist, that's fine.
+    console.warn('[wipe] weeklyLeaderboard not found (ok):', e?.message || e);
+  }
+
 
   // 4) ATTENDANCE
   {
