@@ -475,11 +475,9 @@ function shuffleArray(arr) {
 }
 
 
-
 // ---------------- ATTENDANCE ----------------
 (function initAttendance() {
   const dateInput = document.getElementById('attendance-date');
-  const classNoInput = document.getElementById('attendance-classno');
   const loadBtn = document.getElementById('attendance-load');
   const tableBody = document.querySelector('#attendance-table tbody');
   const statusEl = document.getElementById('attendance-status');
@@ -489,23 +487,14 @@ function shuffleArray(arr) {
   const saveBtn = document.getElementById('attendance-save');
   const saveStatus = document.getElementById('attendance-save-status');
 
-  const adminControls = document.getElementById('attendance-admin-controls');
-  const adminTableWrap = document.getElementById('attendance-admin-table-wrap');
-  const adminActions = document.getElementById('attendance-admin-actions');
-  const studentView = document.getElementById('attendance-student-view');
-  const myTbody = document.querySelector('#my-attendance-table tbody');
-
-  if (!document.getElementById('attendance-section')) return;
+  if (!dateInput || !tableBody) return;
 
   // Default date = today (local)
-  function setToday() {
-    const today = new Date();
-    const yyyy = today.getFullYear();
-    const mm = String(today.getMonth()+1).padStart(2,'0');
-    const dd = String(today.getDate()).padStart(2,'0');
-    if (dateInput) dateInput.value = `${yyyy}-${mm}-${dd}`;
-  }
-  setToday();
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth()+1).padStart(2,'0');
+  const dd = String(today.getDate()).padStart(2,'0');
+  dateInput.value = `${yyyy}-${mm}-${dd}`;
 
   let students = []; // [{uid, displayName}]
   let stateMap = {}; // uid -> {present:boolean}
@@ -513,19 +502,20 @@ function shuffleArray(arr) {
 
   function setStatus(msg){ if(statusEl) statusEl.textContent = msg || ''; }
   function setSaveStatus(msg){ if(saveStatus) saveStatus.textContent = msg || ''; }
-  function dateKey(){ return dateInput ? dateInput.value : ''; }
+  function dateKey(){ return dateInput.value; }
 
-  function renderMode() {
+  function renderNote(){
     const isAdmin = !!window.__isAdmin;
-    if (adminControls) adminControls.classList.toggle('hidden', !isAdmin);
-    if (adminTableWrap) adminTableWrap.classList.toggle('hidden', !isAdmin);
-    if (adminActions) adminActions.classList.toggle('hidden', !isAdmin);
-    if (studentView) studentView.classList.toggle('hidden', isAdmin);
     if (noteEl) {
       noteEl.textContent = isAdmin
-        ? "You are marked as admin. You can edit attendance and Class No."
-        : "";
+        ? "You are marked as admin. You can edit attendance."
+        : "You are not an admin. Attendance is read-only.";
     }
+    if (markAllBtn) markAllBtn.disabled = !isAdmin;
+    if (clearAllBtn) clearAllBtn.disabled = !isAdmin;
+    if (saveBtn) saveBtn.disabled = !isAdmin;
+    const inputs = document.querySelectorAll('.att-present');
+    inputs.forEach(inp => inp.disabled = !isAdmin);
   }
 
   function buildRow(stu){
@@ -544,67 +534,30 @@ function shuffleArray(arr) {
   }
 
   async function loadAttendance(){
-    if (!window.__isAdmin) {
-      // Student mode → just render their history
-      await renderMyAttendanceHistory();
-      return;
-    }
     setStatus('Loading students & attendance…');
     setSaveStatus('');
     dirty = false;
     try {
       students = await (window.__fb_listStudents ? window.__fb_listStudents() : []);
       const att = await (window.__fb_getAttendance ? window.__fb_getAttendance(dateKey()) : {});
-      const meta = await (window.__fb_getAttendanceMeta ? window.__fb_getAttendanceMeta(dateKey()) : {});
-      if (classNoInput) classNoInput.value = meta?.classNo ?? '';
-
       stateMap = {};
       students.forEach(s => {
         stateMap[s.uid] = { present: !!(att[s.uid]?.present), displayName: s.displayName || null };
       });
       // Render table
-      if (tableBody) {
-        tableBody.innerHTML = '';
-        students.forEach(s => tableBody.appendChild(buildRow(s)));
-      }
+      tableBody.innerHTML = '';
+      students.forEach(s => tableBody.appendChild(buildRow(s)));
       setStatus(`Loaded ${students.length} students.`);
+      renderNote();
     } catch(e){
       console.error('Attendance load failed:', e);
       setStatus('Failed to load attendance.');
     }
   }
 
-  async function renderMyAttendanceHistory(){
-    if (!myTbody) return;
-    myTbody.innerHTML = '<tr><td colspan="3">Loading…</td></tr>';
-    try {
-      const rows = await (window.__fb_getMyAttendanceHistoryWithClass ? window.__fb_getMyAttendanceHistoryWithClass(180) : []);
-      myTbody.innerHTML = '';
-      if (!rows.length) {
-        myTbody.innerHTML = '<tr><td colspan="3" class="muted">No attendance records yet.</td></tr>';
-        return;
-      }
-      rows.forEach(r => {
-        const tr = document.createElement('tr');
-        const status = r.present ? 'Present' : 'Absent';
-        tr.innerHTML = `<td>${r.date}</td><td>${r.classNo ?? ''}</td><td>${status}</td>`;
-        myTbody.appendChild(tr);
-      });
-    } catch(e){
-      console.error('My history load failed:', e);
-      myTbody.innerHTML = '<tr><td colspan="3">Failed to load.</td></tr>';
-    }
-  }
-
   // Actions
   loadBtn?.addEventListener('click', loadAttendance);
   dateInput?.addEventListener('change', loadAttendance);
-  if (document.getElementById('attendance-section')) {
-    // When navigating to Attendance, re-evaluate mode
-    const obs = new MutationObserver(() => renderMode());
-    obs.observe(document.body, { attributes: true, childList: true, subtree: true });
-    renderMode();
-  }
   markAllBtn?.addEventListener('click', () => {
     students.forEach(s => { stateMap[s.uid] = { present: true, displayName: s.displayName }; });
     // update checkboxes
@@ -617,13 +570,10 @@ function shuffleArray(arr) {
     dirty = true;
   });
   saveBtn?.addEventListener('click', async () => {
+    if (!dirty) { setSaveStatus('No changes.'); return; }
     try {
-      const date = dateKey();
       const records = students.map(s => ({ uid: s.uid, present: !!(stateMap[s.uid]?.present), displayName: s.displayName }));
-      await (window.__fb_saveAttendanceBulk ? window.__fb_saveAttendanceBulk(date, records) : Promise.resolve());
-      if (classNoInput && classNoInput.value) {
-        await (window.__fb_setAttendanceMeta ? window.__fb_setAttendanceMeta(date, Number(classNoInput.value)) : Promise.resolve());
-      }
+      await (window.__fb_saveAttendanceBulk ? window.__fb_saveAttendanceBulk(dateKey(), records) : Promise.resolve());
       setSaveStatus('Saved ✔');
       dirty = false;
     } catch(e){

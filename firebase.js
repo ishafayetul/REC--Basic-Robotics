@@ -7,7 +7,7 @@ import {
   getFirestore, doc, getDoc, setDoc, updateDoc, serverTimestamp,
   collection, query, orderBy, limit, onSnapshot, addDoc,
   runTransaction, getDocs, increment, writeBatch, deleteDoc,
-  collectionGroup
+  collectionGroup, where, documentId
 } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
 // --- Firebase project config (updated) ---
@@ -117,6 +117,7 @@ onAuthStateChanged(auth, async (user) => {
           const adminSnap = await getDoc(doc(db, 'admins', user.uid));
           const isAdmin = adminSnap.exists();
           window.__isAdmin = !!isAdmin;
+          try { window.__onAdminStateChanged && window.__onAdminStateChanged(window.__isAdmin); } catch {}
           adminRow.classList.toggle('hidden', !isAdmin);
         } catch {
           window.__isAdmin = false;
@@ -586,37 +587,54 @@ window.__fb_setAttendanceMeta = async function(dateKey, classNo){
 window.__fb_getMyAttendanceHistoryWithClass = async function(limitN = 180){
   const user = auth.currentUser;
   if (!user) return [];
-  // Find all attendance docs for this uid
+  // Query only this student's docs within the collection group to avoid scanning everyone
   const cg = collectionGroup(db, 'students');
-  // No direct documentId() filter in this environment; fetch and filter client-side
-  const snaps = await getDocs(cg);
-  const mine = [];
-  snaps.forEach(docSnap => {
-    if (docSnap.id === user.uid) {
-      const parentDateId = docSnap.ref.parent.parent.id; // attendance/{date}/students/{uid}
-      const d = docSnap.data() || {};
-      mine.push({ date: parentDateId, present: !!d.present });
+  let qy;
+  try {
+    qy = query(cg, where(documentId(), '==', user.uid));
+  } catch (e) {
+    // Fallback: fetch all and filter (older SDKs)
+    const snapAll = await getDocs(cg);
+    const all = [];
+    snapAll.forEach(docSnap => {
+      if (docSnap.id === user.uid) {
+        const dateDoc = docSnap.ref.parent ? docSnap.ref.parent.parent : null;
+        if (dateDoc && dateDoc.id) {
+          const d = docSnap.data() || {};
+          all.append({ date: dateDoc.id, present: !!d.present });
+        }
+      }
+    });
+    all.sort((a,b)=> a.date > b.date ? -1 : (a.date < b.date ? 1 : 0));
+    const top = all.slice(0, limitN);
+    const out = [];
+    for (const row of top) {
+      let classNo = undefined;
+      try {
+        const msnap = await getDoc(doc(db, 'attendance', row.date));
+        classNo = msnap.exists() ? msnap.data().classNo : undefined;
+      } catch {}
+      out.push({ date: row.date, classNo, present: row.present });
     }
-  });
-  // Sort by date desc
-  mine.sort((a,b) => a.date > b.date ? -1 : a.date < b.date ? 1 : 0);
-  const top = mine.slice(0, limitN);
-  // Fetch classNo per date
-  const results = [];
-  for (const row of top) {
-    try{
-      const msnap = await getDoc(doc(db, 'attendance', row.date));
-      const classNo = msnap.exists() ? msnap.data().classNo : undefined;
-      //
-    }catch{}
+    return out;
   }
+  const snap = await getDocs(qy);
+  const rows = [];
+  snap.forEach(docSnap => {
+    const dateDoc = docSnap.ref.parent ? docSnap.ref.parent.parent : null;
+    if (!dateDoc) return;
+    const d = docSnap.data() || {};
+    rows.push({ date: dateDoc.id, present: !!d.present });
+  });
+  rows.sort((a,b)=> a.date > b.date ? -1 : (a.date < b.date ? 1 : 0));
+  const top = rows.slice(0, limitN);
   const out = [];
   for (const row of top) {
     let classNo = undefined;
-    try{
+    try {
       const msnap = await getDoc(doc(db, 'attendance', row.date));
       classNo = msnap.exists() ? msnap.data().classNo : undefined;
-    }catch(e){}
+    } catch {}
     out.push({ date: row.date, classNo, present: row.present });
   }
   return out;
