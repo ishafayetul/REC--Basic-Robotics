@@ -583,16 +583,18 @@ window.__fb_setAttendanceMeta = async function(dateKey, classNo){
 };
 
 // --- Student-only history: Date, Class No, Present/Absent ---
+// --- Student-only history: Date, Class No, Present/Absent ---
 window.__fb_getMyAttendanceHistoryWithClass = async function(limitN = 180){
   const user = auth.currentUser;
   if (!user) return [];
-  // Query only this student's docs within the collection group to avoid scanning everyone
+
   const cg = collectionGroup(db, 'students');
   let qy;
   try {
+    // Efficient path: only docs where the student-id == current uid
     qy = query(cg, where(documentId(), '==', user.uid));
   } catch (e) {
-    // Fallback: fetch all and filter (older SDKs)
+    // Fallback: scan then filter (older SDKs/environments)
     const snapAll = await getDocs(cg);
     const all = [];
     snapAll.forEach(docSnap => {
@@ -600,7 +602,7 @@ window.__fb_getMyAttendanceHistoryWithClass = async function(limitN = 180){
         const dateDoc = docSnap.ref.parent ? docSnap.ref.parent.parent : null;
         if (dateDoc && dateDoc.id) {
           const d = docSnap.data() || {};
-          // FIX: append -> push
+          // FIX HERE: append -> push
           all.push({ date: dateDoc.id, present: !!d.present });
         }
       }
@@ -618,6 +620,8 @@ window.__fb_getMyAttendanceHistoryWithClass = async function(limitN = 180){
     }
     return out;
   }
+
+  // Normal path
   const snap = await getDocs(qy);
   const rows = [];
   snap.forEach(docSnap => {
@@ -628,6 +632,7 @@ window.__fb_getMyAttendanceHistoryWithClass = async function(limitN = 180){
   });
   rows.sort((a,b)=> a.date > b.date ? -1 : (a.date < b.date ? 1 : 0));
   const top = rows.slice(0, limitN);
+
   const out = [];
   for (const row of top) {
     let classNo = undefined;
@@ -639,3 +644,4 @@ window.__fb_getMyAttendanceHistoryWithClass = async function(limitN = 180){
   }
   return out;
 };
+

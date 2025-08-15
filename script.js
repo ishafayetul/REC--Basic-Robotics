@@ -496,6 +496,7 @@ function shuffleArray(arr) {
   const clearAllBtn = document.getElementById('attendance-clear-all');
   const saveBtn = document.getElementById('attendance-save');
   const saveStatus = document.getElementById('attendance-save-status');
+  const classNoInput = document.getElementById('attendance-classno');
 
   // NEW: student-only elements and admin containers
   const adminControls = document.getElementById('attendance-admin-controls');
@@ -567,26 +568,39 @@ function shuffleArray(arr) {
   }
 
   async function loadAttendance(){
-    setStatus('Loading students & attendance…');
-    setSaveStatus('');
-    dirty = false;
+  setStatus('Loading students & attendance…');
+  setSaveStatus('');
+  dirty = false;
+  try {
+    students = await (window.__fb_listStudents ? window.__fb_listStudents() : []);
+    const att = await (window.__fb_getAttendance ? window.__fb_getAttendance(dateKey()) : {});
+
+    stateMap = {};
+    students.forEach(s => {
+      stateMap[s.uid] = { present: !!(att[s.uid]?.present), displayName: s.displayName || null };
+    });
+
+    // Render admin table
+    tableBody.innerHTML = '';
+    students.forEach(s => tableBody.appendChild(buildRow(s)));
+    setStatus(`Loaded ${students.length} students.`);
+
+    // Load Class No meta and show in the input box
     try {
-      students = await (window.__fb_listStudents ? window.__fb_listStudents() : []);
-      const att = await (window.__fb_getAttendance ? window.__fb_getAttendance(dateKey()) : {});
-      stateMap = {};
-      students.forEach(s => {
-        stateMap[s.uid] = { present: !!(att[s.uid]?.present), displayName: s.displayName || null };
-      });
-      // Render admin table
-      tableBody.innerHTML = '';
-      students.forEach(s => tableBody.appendChild(buildRow(s)));
-      setStatus(`Loaded ${students.length} students.`);
-      renderNote();
-    } catch(e){
-      console.error('Attendance load failed:', e);
-      setStatus('Failed to load attendance.');
+      const meta = await (window.__fb_getAttendanceMeta ? window.__fb_getAttendanceMeta(dateKey()) : {});
+      if (classNoInput) classNoInput.value = (meta.classNo ?? '');
+    } catch (e) {
+      console.warn('getAttendanceMeta failed', e);
+      if (classNoInput) classNoInput.value = '';
     }
+
+    renderNote();
+  } catch(e){
+    console.error('Attendance load failed:', e);
+    setStatus('Failed to load attendance.');
   }
+  }
+
 
   // NEW: Student-only history renderer
   async function renderMyAttendance() {
@@ -632,17 +646,37 @@ function shuffleArray(arr) {
     dirty = true;
   });
   saveBtn?.addEventListener('click', async () => {
-    if (!dirty) { setSaveStatus('No changes.'); return; }
-    try {
-      const records = students.map(s => ({ uid: s.uid, present: !!(stateMap[s.uid]?.present), displayName: s.displayName }));
-      await (window.__fb_saveAttendanceBulk ? window.__fb_saveAttendanceBulk(dateKey(), records) : Promise.resolve());
-      setSaveStatus('Saved ✔');
-      dirty = false;
-    } catch(e){
-      console.error('Attendance save failed:', e);
-      setSaveStatus('Save failed.');
+  try {
+    // Always try to save Class No if present (admins only by rules)
+    if (classNoInput && classNoInput.value !== '') {
+      try {
+        await (window.__fb_setAttendanceMeta
+          ? window.__fb_setAttendanceMeta(dateKey(), Number(classNoInput.value))
+          : Promise.resolve());
+      } catch (e) {
+        console.warn('setAttendanceMeta failed', e);
+      }
     }
-  });
+
+    // Only save attendance rows when there are changes
+    if (!dirty) { setSaveStatus('Saved Class No. No attendance changes.'); return; }
+
+    const records = students.map(s => ({
+      uid: s.uid,
+      present: !!(stateMap[s.uid]?.present),
+      displayName: s.displayName
+    }));
+    await (window.__fb_saveAttendanceBulk
+      ? window.__fb_saveAttendanceBulk(dateKey(), records)
+      : Promise.resolve());
+
+    setSaveStatus('Saved ✔');
+    dirty = false;
+  } catch(e){
+    console.error('Attendance save failed:', e);
+    setSaveStatus('Save failed.');
+  }
+});
 
   // Initial admin load (safe even if user is student; admin UI will be hidden)
   loadAttendance();
