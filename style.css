@@ -98,8 +98,6 @@ button{
 }
 button:hover{ background: var(--primary-hover); }
 button:active{ transform: translateY(1px); }
-button.save{ background:#10b981; }
-button.save:hover{ background:#0ea371; }
 button:disabled { opacity: .6; cursor: not-allowed; }
 
 /* =========================
@@ -108,10 +106,10 @@ button:disabled { opacity: .6; cursor: not-allowed; }
 .practice-actions{ display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
 
 /* =========================
-   Deck list / options
+   Practice set list / options
    ========================= */
-#deck-buttons{ display:flex; flex-wrap:wrap; gap:10px; }
-#deck-buttons button{ border-radius: 999px; padding: 8px 14px; }
+#practice-buttons{ display:flex; flex-wrap:wrap; gap:10px; }
+#practice-buttons button{ border-radius: 999px; padding: 8px 14px; }
 
 #options{ list-style:none; padding:0; margin: 12px 0 0; }
 #options li{
@@ -131,10 +129,10 @@ button:disabled { opacity: .6; cursor: not-allowed; }
 /* =========================
    Leaderboards
    ========================= */
-#overall-leaderboard-list,
-#todays-leaderboard-list{ list-style:none; padding-left:0; }
-#overall-leaderboard-list li,
-#todays-leaderboard-list li{
+#course-leaderboard-list,
+#weekly-leaderboard-list{ list-style:none; padding-left:0; }
+#course-leaderboard-list li,
+#weekly-leaderboard-list li{
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -265,9 +263,7 @@ button:disabled { opacity: .6; cursor: not-allowed; }
   .main-content{ padding-bottom: 360px; }
 }
 
-/* ... keep your existing CSS ... */
-
-/* Deck progress (Practice) */
+/* Practice progress */
 .deck-progress{
   margin: 8px 0 12px;
   background: #eef2ff;
@@ -287,3 +283,10 @@ button:disabled { opacity: .6; cursor: not-allowed; }
   font-size: 14px;
   color: #111;
 }
+
+
+/* Attendance */
+.attendance-controls{
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;
+}
+.attendance-actions{ margin-top:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }

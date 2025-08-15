@@ -1,13 +1,12 @@
-// script.js — decks loader + quiz UI + grammar list + progress UI
+// script.js — Practice (MCQ), Lectures list, Progress, Leaderboards UI glue
 // NOTE: All Firebase access is delegated to firebase.js helpers on window.*
 // This file contains NO direct Firebase imports.
 
 // ---------------- State ----------------
-let allDecks = {};                // { deckName: [{front, back, romaji}] }
-let currentDeck = [];
-let currentDeckName = "";
+let allSets = {};                // { setName: [{q, options:[4], correctIndex:0}] }
+let currentSet = [];
+let currentSetName = "";
 let currentIndex = 0;
-let mode = "jp-en";
 let score = { correct: 0, wrong: 0, skipped: 0 };
 
 let mistakes = JSON.parse(localStorage.getItem("mistakes") || "[]");
@@ -15,17 +14,17 @@ let masteryMap = JSON.parse(localStorage.getItem("masteryMap") || "{}");
 
 // Session buffer (temporary storage; committed on demand/auto via firebase.js)
 let sessionBuf = JSON.parse(localStorage.getItem("sessionBuf") || "null") || {
-  deckName: "",
-  mode: "jp-en",
+  deckName: "",           // kept for backwards compatibility with firebase.js
+  mode: "mcq",            // single mode for this portal
   correct: 0,
   wrong: 0,
   skipped: 0,
   total: 0,
-  jpEnCorrect: 0,
-  enJpCorrect: 0
+  jpEnCorrect: 0,         // we will store MCQ corrects here
+  enJpCorrect: 0          // unused for MCQ; always 0
 };
 
-let currentSectionId = "deck-select";
+let currentSectionId = "practice-select";
 let committing = false;
 
 // ---------------- DOM helpers ----------------
@@ -44,9 +43,9 @@ function percent(n, d) {
   return Math.floor((n / d) * 100);
 }
 
-// ---------------- Deck progress UI ----------------
+// ---------------- Set progress UI ----------------
 function updateDeckProgress() {
-  const totalQs = currentDeck.length || 0;
+  const totalQs = currentSet.length || 0;
   const done = Math.min(currentIndex, totalQs);
   const p = percent(done, totalQs);
   const bar = $("deck-progress-bar");
@@ -57,7 +56,6 @@ function updateDeckProgress() {
 
 // ---------------- Autosave bridge ----------------
 async function autoCommitIfNeeded(reason = "") {
-  // Only commit if firebase helper exists and we have data
   if (!window.__fb_commitSession) return;
   if (committing) return;
   if (!sessionBuf || sessionBuf.total <= 0) return;
@@ -66,18 +64,18 @@ async function autoCommitIfNeeded(reason = "") {
     committing = true;
     console.log("[autosave] committing buffered session", { reason, sessionBuf });
     const payload = {
-      deckName: sessionBuf.deckName || 'Unknown Deck',
+      deckName: sessionBuf.deckName || 'Unknown Set',
       mode: sessionBuf.mode,
       correct: sessionBuf.correct,
       wrong: sessionBuf.wrong,
       skipped: sessionBuf.skipped,
       total: sessionBuf.total,
-      jpEnCorrect: sessionBuf.jpEnCorrect,
+      jpEnCorrect: sessionBuf.jpEnCorrect,   // MCQ corrects
       enJpCorrect: sessionBuf.enJpCorrect
     };
     await window.__fb_commitSession(payload);
 
-    // Reset counts but keep deck & mode to allow continuing smoothly
+    // Reset counts but keep set name and mode
     sessionBuf.correct = 0;
     sessionBuf.wrong = 0;
     sessionBuf.skipped = 0;
@@ -86,12 +84,10 @@ async function autoCommitIfNeeded(reason = "") {
     sessionBuf.enJpCorrect = 0;
     persistSession();
 
-    // Refresh progress summaries
     await renderProgress();
     console.log("[autosave] saved ✔");
   } catch (e) {
     console.warn("[autosave] failed → keeping local buffer:", e?.message || e);
-    // Leave sessionBuf intact; firebase.js will try to commit pendingSession next launch
   } finally {
     committing = false;
   }
@@ -99,8 +95,8 @@ async function autoCommitIfNeeded(reason = "") {
 
 // ---------------- App lifecycle ----------------
 window.onload = () => {
-  loadDeckManifest();
-  loadGrammarManifest();
+  loadPracticeManifest();
+  loadLecturesManifest();
   renderProgress();
   updateScore();
 };
@@ -128,7 +124,7 @@ window.addEventListener('beforeunload', () => {
 
 // ---------------- Section Router ----------------
 function showSection(id) {
-  // Leaving Practice? autosave the deck's buffered progress
+  // Leaving Practice? autosave the buffered progress
   if (currentSectionId === "practice" && id !== "practice") {
     autoCommitIfNeeded("leaving practice");
   }
@@ -142,166 +138,144 @@ function showSection(id) {
 
   currentSectionId = id;
 
-  // Keep progress bar accurate if we re-enter Practice
   if (id === "practice") updateDeckProgress();
 }
-
-// Make router global for inline onclicks in HTML
 window.showSection = showSection;
 
-// ---------------- DECKS ----------------
-async function loadDeckManifest() {
+// ---------------- PRACTICE (MCQ) ----------------
+async function loadPracticeManifest() {
   try {
-    statusLine("deck-status", "Loading decks…");
-    const res = await fetch("vocab_decks/deck_manifest.json");
-    if (!res.ok) throw new Error(`HTTP ${res.status} for vocab_decks/deck_manifest.json`);
+    statusLine("practice-status", "Loading practice sets…");
+    const res = await fetch("practice/questions.json");
+    if (!res.ok) throw new Error(`HTTP ${res.status} for practice/questions.json`);
     const text = await res.text();
-    if (text.trim().startsWith("<")) throw new Error("Manifest is HTML (check path/case for vocab_decks/deck_manifest.json)");
+    if (text.trim().startsWith("<")) throw new Error("Manifest is HTML (check path/case for practice/questions.json)");
 
     /** @type {string[]} */
-    const deckList = JSON.parse(text);
-    deckList.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    const setList = JSON.parse(text);
+    setList.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
-    allDecks = {};
-    for (const file of deckList) {
+    allSets = {};
+    for (const file of setList) {
       const name = file.replace(".csv", "");
-      const url = `vocab_decks/${file}`;
-      statusLine("deck-status", `Loading ${file}…`);
-      const deck = await fetchAndParseCSV(url);
-      allDecks[name] = deck;
+      const url = `practice/${file}`;
+      statusLine("practice-status", `Loading ${file}…`);
+      const questions = await fetchAndParseMCQ(url);
+      allSets[name] = questions;
     }
 
-    renderDeckButtons();
-    statusLine("deck-status", `Loaded ${Object.keys(allDecks).length} deck(s).`);
+    renderPracticeButtons();
+    statusLine("practice-status", `Loaded ${Object.keys(allSets).length} set(s).`);
   } catch (err) {
-    console.error("Failed to load decks:", err);
-    statusLine("deck-status", `Failed to load decks: ${err.message}`);
+    console.error("Failed to load practice sets:", err);
+    statusLine("practice-status", `Failed to load: ${err.message}`);
   }
 }
 
-async function fetchAndParseCSV(url) {
+async function fetchAndParseMCQ(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
   const text = await res.text();
 
   const lines = text.replace(/\r\n?/g, "\n").split("\n").filter(Boolean);
   const rows = lines.map((line) => {
+    // CSV format: Question, option1, option2, option3, option4  (no header)
     const parts = line.split(",");
-    const word   = (parts[0] || "").trim();
-    const meaning = (parts[1] || "").trim();
-    const romaji  = (parts[2] || "").trim();
-    return { front: word, back: meaning, romaji };
-  }).filter(r => r.front && r.back);
+    const q  = (parts[0] || "").trim();
+    const o1 = (parts[1] || "").trim();
+    const o2 = (parts[2] || "").trim();
+    const o3 = (parts[3] || "").trim();
+    const o4 = (parts[4] || "").trim();
+    // Assumption: option1 is the correct answer
+    const options = [o1, o2, o3, o4].filter(Boolean);
+    return { q, options, correctIndex: 0 };
+  }).filter(r => r.q && r.options.length >= 2);
 
   return rows;
 }
 
-function renderDeckButtons() {
-  const container = $("deck-buttons");
+function renderPracticeButtons() {
+  const container = $("practice-buttons");
   if (!container) return;
   container.innerHTML = "";
 
-  Object.keys(allDecks).forEach((name) => {
+  Object.keys(allSets).forEach((name) => {
     const btn = document.createElement("button");
     btn.textContent = name;
     btn.onclick = async () => {
-      // If switching decks while having progress, auto-save first
       if (sessionBuf.total > 0 && sessionBuf.deckName && sessionBuf.deckName !== name) {
-        await autoCommitIfNeeded("switching decks");
+        await autoCommitIfNeeded("switching sets");
       }
-      selectDeck(name);
+      selectSet(name);
     };
     container.appendChild(btn);
   });
 }
 
-function selectDeck(name) {
-  currentDeck = allDecks[name] || [];
-  currentDeckName = name;
+function selectSet(name) {
+  currentSet = allSets[name] || [];
+  currentSetName = name;
   currentIndex = 0;
-  if (currentDeck.length === 0) {
-    alert(`Deck "${name}" is empty or failed to load.`);
+  if (currentSet.length === 0) {
+    alert(`Set "${name}" is empty or failed to load.`);
     return;
   }
-  // reset session buffer for a fresh run on this deck
   sessionBuf = {
     deckName: name,
-    mode: "jp-en",
+    mode: "mcq",
     correct: 0, wrong: 0, skipped: 0, total: 0,
     jpEnCorrect: 0, enJpCorrect: 0
   };
   persistSession();
-  showSection("mode-select");
-}
-
-// ---------------- PRACTICE ----------------
-function startPractice(selectedMode) {
-  mode = selectedMode;
-  sessionBuf.mode = selectedMode;
-  currentIndex = 0;
-  score = { correct: 0, wrong: 0, skipped: 0 };
-  shuffleArray(currentDeck);
   showSection("practice");
+  showQuestion();
   updateScore();
   updateDeckProgress();
-  showQuestion();
 }
-window.startPractice = startPractice; // used by inline onclicks
 
 function showQuestion() {
-  const q = currentDeck[currentIndex];
+  const q = currentSet[currentIndex];
   if (!q) return nextQuestion();
 
-  const front  = (mode === "jp-en") ? q.front : q.back;
-  const answer = (mode === "jp-en") ? q.back  : q.front;
-  const options = generateOptions(answer);
-
-  setText("question-box", front);
+  setText("question-box", q.q);
   setText("extra-info", "");
+
   const optionsList = $("options");
   if (!optionsList) return;
   optionsList.innerHTML = "";
 
-  options.forEach((opt) => {
+  const shuffled = q.options.slice();
+  shuffleArray(shuffled);
+
+  const correct = q.options[q.correctIndex];
+  shuffled.forEach((opt) => {
     const li = document.createElement("li");
     li.textContent = opt;
-    li.onclick = () => checkAnswer(opt, answer, q);
+    li.onclick = () => checkAnswer(opt, correct, q);
     optionsList.appendChild(li);
   });
 
   updateDeckProgress();
 }
 
-function generateOptions(correct) {
-  const pool = currentDeck.map((q) => (mode === "jp-en" ? q.back : q.front)).filter(Boolean);
-  const unique = [...new Set(pool.filter((opt) => opt !== correct))];
-  shuffleArray(unique);
-  const distractors = unique.slice(0, 3);
-  const options = [correct, ...distractors];
-  return shuffleArray(options);
-}
-
-function checkAnswer(selected, correct, wordObj) {
+function checkAnswer(selected, correct, qObj) {
   const options = document.querySelectorAll("#options li");
   options.forEach((li) => {
     if (li.textContent === correct) li.classList.add("correct");
     else if (li.textContent === selected) li.classList.add("wrong");
   });
 
-  const key = wordObj.front + "|" + wordObj.back;
+  const key = qObj.q + "|" + correct;
 
   if (selected === correct) {
     score.correct++;
     sessionBuf.correct++;
     sessionBuf.total++;
-    if (mode === 'jp-en') sessionBuf.jpEnCorrect++;
-    else sessionBuf.enJpCorrect++;
+    sessionBuf.jpEnCorrect++;   // store MCQ corrects here for scoring
 
     masteryMap[key] = (masteryMap[key] || 0) + 1;
     if (masteryMap[key] >= 5) {
-      mistakes = mistakes.filter(
-        (m) => m.front !== wordObj.front || m.back !== wordObj.back
-      );
+      mistakes = mistakes.filter((m) => m.q !== qObj.q);
     }
   } else {
     score.wrong++;
@@ -309,7 +283,7 @@ function checkAnswer(selected, correct, wordObj) {
     sessionBuf.total++;
 
     masteryMap[key] = 0;
-    mistakes.push(wordObj);
+    mistakes.push(qObj);
   }
 
   localStorage.setItem("mistakes", JSON.stringify(mistakes));
@@ -323,16 +297,16 @@ function checkAnswer(selected, correct, wordObj) {
 }
 
 function skipQuestion() {
-  const wordObj = currentDeck[currentIndex];
-  if (!wordObj) return;
-  const key = wordObj.front + "|" + wordObj.back;
+  const qObj = currentSet[currentIndex];
+  if (!qObj) return;
+  const key = qObj.q + "|" + (qObj.options[qObj.correctIndex] || "");
 
   score.skipped++;
   sessionBuf.skipped++;
   sessionBuf.total++;
 
   masteryMap[key] = 0;
-  mistakes.push(wordObj);
+  mistakes.push(qObj);
 
   localStorage.setItem("mistakes", JSON.stringify(mistakes));
   localStorage.setItem("masteryMap", JSON.stringify(masteryMap));
@@ -345,10 +319,9 @@ window.skipQuestion = skipQuestion;
 
 function nextQuestion() {
   currentIndex++;
-  if (currentIndex >= currentDeck.length) {
-    // Finished the deck → navigate to Vocab; autosave happens via showSection()
+  if (currentIndex >= currentSet.length) {
     alert(`Finished! ✅ ${score.correct} ❌ ${score.wrong} ➖ ${score.skipped}\nSaving your progress…`);
-    showSection("deck-select");
+    showSection("practice-select");
   } else {
     showQuestion();
   }
@@ -360,48 +333,23 @@ function updateScore() {
   setText("skipped", String(score.skipped));
 }
 
-// ---------------- LEARN mode ----------------
-function startLearnMode() {
-  currentIndex = 0;
-  if (!currentDeck.length) return alert("Pick a deck first!");
-  showSection("learn");
-  showLearnCard();
-}
-window.startLearnMode = startLearnMode;
-
-function showLearnCard() {
-  const word = currentDeck[currentIndex];
-  if (!word) return;
-  const jp = word.front;
-  const en = word.back;
-  const ro = word.romaji || "";
-  setText("learn-box", `${jp} – ${en} – ${ro}`);
-}
-
-function nextLearn() {
-  currentIndex++;
-  if (currentIndex >= currentDeck.length) {
-    alert("🎉 Finished learning this deck!");
-    showSection("deck-select");
-  } else {
-    showLearnCard();
-  }
-}
-window.nextLearn = nextLearn;
-
 // ---------------- MISTAKES ----------------
 function startMistakePractice() {
   if (mistakes.length === 0) return alert("No mistakes yet!");
-  currentDeck = mistakes.slice();
-  currentDeckName = "Mistakes";
+  currentSet = mistakes.slice();
+  currentSetName = "Mistakes";
   currentIndex = 0;
   showSection("practice");
-  startPractice(mode);
+  // reset running score
+  score = { correct: 0, wrong: 0, skipped: 0 };
+  sessionBuf = { deckName: "Mistakes", mode: "mcq", correct: 0, wrong: 0, skipped: 0, total: 0, jpEnCorrect: 0, enJpCorrect: 0 };
+  showQuestion();
+  updateDeckProgress();
 }
 window.startMistakePractice = startMistakePractice;
 
 function clearMistakes() {
-  if (confirm("Clear all mistake words?")) {
+  if (confirm("Clear all mistake questions?")) {
     mistakes = [];
     localStorage.setItem("mistakes", JSON.stringify([]));
     alert("Mistakes cleared.");
@@ -409,51 +357,38 @@ function clearMistakes() {
 }
 window.clearMistakes = clearMistakes;
 
-// ---------------- GRAMMAR ----------------
-async function loadGrammarManifest() {
+// ---------------- LECTURES ----------------
+async function loadLecturesManifest() {
   try {
-    statusLine("grammar-status", "Loading grammar lessons…");
+    statusLine("lectures-status", "Loading lectures…");
 
-    let base = "grammar/";
-    let list = null;
+    const res = await fetch("lectures/lectures.json");
+    if (!res.ok) throw new Error(`HTTP ${res.status} for lectures/lectures.json`);
+    const t = await res.text();
+    if (t.trim().startsWith("<")) throw new Error("Got HTML instead of JSON for lectures manifest");
+    const list = JSON.parse(t); // string[] of PDF filenames
 
-    const tryLoad = async (url) => {
-      const r = await fetch(url);
-      if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
-      const t = await r.text();
-      if (t.trim().startsWith("<")) throw new Error("Got HTML instead of JSON");
-      return JSON.parse(t);
-    };
-
-    try {
-      list = await tryLoad("grammar/grammar_manifest.json");
-      base = "grammar/";
-    } catch (e1) {
-      list = await tryLoad("grammar_manifest.json");
-      base = "";
-    }
-
-    const container = $("grammar-list");
+    const container = $("lectures-list");
     if (!container) return;
     container.innerHTML = "";
 
     list.forEach((file) => {
       const btn = document.createElement("button");
       btn.textContent = file.replace(".pdf", "");
-      btn.onclick = () => window.open(`${base}${file}`, "_blank");
+      btn.onclick = () => window.open(`lectures/${file}`, "_blank");
       container.appendChild(btn);
     });
 
-    statusLine("grammar-status", `Loaded ${list.length} grammar file(s).`);
+    statusLine("lectures-status", `Loaded ${list.length} lecture file(s).`);
   } catch (err) {
-    console.error("Failed to load grammar manifest:", err);
-    statusLine("grammar-status", `Failed to load grammar: ${err.message}`);
+    console.error("Failed to load lectures:", err);
+    statusLine("lectures-status", `Failed to load lectures: ${err.message}`);
   }
 }
 
 // ---------------- PROGRESS (reads via firebase.js) ----------------
 async function renderProgress() {
-  if (!window.__fb_fetchAttempts) return; // firebase.js exposes this
+  if (!window.__fb_fetchAttempts) return;
 
   try {
     const attempts = await window.__fb_fetchAttempts(50);
@@ -517,9 +452,9 @@ async function renderProgress() {
         const d = (last.correct || 0) - (prev.correct || 0);
         const cls = d >= 0 ? "delta-up" : "delta-down";
         const sign = d > 0 ? "+" : (d < 0 ? "" : "±");
-        deltaBox.innerHTML = `<span class="${cls}">${sign}${d} correct vs previous (same deck)</span>`;
+        deltaBox.innerHTML = `<span class="${cls}">${sign}${d} correct vs previous (same set)</span>`;
       } else if (last && !prev) {
-        deltaBox.textContent = "No previous attempt for this deck.";
+        deltaBox.textContent = "No previous attempt for this set.";
       } else {
         deltaBox.textContent = "—";
       }
@@ -539,56 +474,114 @@ function shuffleArray(arr) {
   return arr;
 }
 
-function showRomaji() {
-  const card = currentDeck[currentIndex];
-  if (!card) return;
-  const romaji = card.romaji || "(no romaji)";
-  setText("extra-info", `Romaji: ${romaji}`);
-}
-window.showRomaji = showRomaji;
 
-function showMeaning() {
-  const card = currentDeck[currentIndex];
-  if (!card) return;
-  const correct = mode === "jp-en" ? card.back : card.front;
-  setText("extra-info", `Meaning: ${correct}`);
-}
-window.showMeaning = showMeaning;
+// ---------------- ATTENDANCE ----------------
+(function initAttendance() {
+  const dateInput = document.getElementById('attendance-date');
+  const loadBtn = document.getElementById('attendance-load');
+  const tableBody = document.querySelector('#attendance-table tbody');
+  const statusEl = document.getElementById('attendance-status');
+  const noteEl = document.getElementById('attendance-note');
+  const markAllBtn = document.getElementById('attendance-mark-all');
+  const clearAllBtn = document.getElementById('attendance-clear-all');
+  const saveBtn = document.getElementById('attendance-save');
+  const saveStatus = document.getElementById('attendance-save-status');
 
-// ---------------- Navbar actions ----------------
-window.saveCurrentScore = async function () {
-  try {
-    await autoCommitIfNeeded("manual save");
-    alert('Progress saved ✅');
-  } catch {
-    // autoCommitIfNeeded already logs/handles errors
+  if (!dateInput || !tableBody) return;
+
+  // Default date = today (local)
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth()+1).padStart(2,'0');
+  const dd = String(today.getDate()).padStart(2,'0');
+  dateInput.value = `${yyyy}-${mm}-${dd}`;
+
+  let students = []; // [{uid, displayName}]
+  let stateMap = {}; // uid -> {present:boolean}
+  let dirty = false;
+
+  function setStatus(msg){ if(statusEl) statusEl.textContent = msg || ''; }
+  function setSaveStatus(msg){ if(saveStatus) saveStatus.textContent = msg || ''; }
+  function dateKey(){ return dateInput.value; }
+
+  function renderNote(){
+    const isAdmin = !!window.__isAdmin;
+    if (noteEl) {
+      noteEl.textContent = isAdmin
+        ? "You are marked as admin. You can edit attendance."
+        : "You are not an admin. Attendance is read-only.";
+    }
+    if (markAllBtn) markAllBtn.disabled = !isAdmin;
+    if (clearAllBtn) clearAllBtn.disabled = !isAdmin;
+    if (saveBtn) saveBtn.disabled = !isAdmin;
+    const inputs = document.querySelectorAll('.att-present');
+    inputs.forEach(inp => inp.disabled = !isAdmin);
   }
-};
 
-window.resetSite = async function () {
-  const sure = confirm("⚠️ This will erase ALL your progress (attempts, daily aggregates, leaderboard rows, tasks) from the database. Your sign‑in will remain.\n\nProceed?");
-  if (!sure) return;
-
-  const btn = event?.target;
-  if (btn) btn.disabled = true;
-
-  try {
-    // Delegate to firebase.js where auth/db are available
-    if (!window.__fb_fullReset) throw new Error("__fb_fullReset is not available.");
-    await window.__fb_fullReset();
-
-    // Clear local caches
-    localStorage.removeItem("mistakes");
-    localStorage.removeItem("masteryMap");
-    localStorage.removeItem("sessionBuf");
-    localStorage.removeItem("pendingSession");
-
-    alert("✅ All progress erased. You are still signed in.");
-    location.reload();
-  } catch (e) {
-    console.error("Full reset failed:", e);
-    alert("Reset failed: " + (e?.message || e));
-  } finally {
-    if (btn) btn.disabled = false;
+  function buildRow(stu){
+    const tr = document.createElement('tr');
+    const nameTd = document.createElement('td');
+    nameTd.textContent = stu.displayName || '(Unnamed)';
+    const presentTd = document.createElement('td');
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.className = 'att-present';
+    chk.checked = !!(stateMap[stu.uid]?.present);
+    chk.onchange = () => { stateMap[stu.uid] = { present: chk.checked, displayName: stu.displayName }; dirty = true; };
+    presentTd.appendChild(chk);
+    tr.append(nameTd, presentTd);
+    return tr;
   }
-};
+
+  async function loadAttendance(){
+    setStatus('Loading students & attendance…');
+    setSaveStatus('');
+    dirty = false;
+    try {
+      students = await (window.__fb_listStudents ? window.__fb_listStudents() : []);
+      const att = await (window.__fb_getAttendance ? window.__fb_getAttendance(dateKey()) : {});
+      stateMap = {};
+      students.forEach(s => {
+        stateMap[s.uid] = { present: !!(att[s.uid]?.present), displayName: s.displayName || null };
+      });
+      // Render table
+      tableBody.innerHTML = '';
+      students.forEach(s => tableBody.appendChild(buildRow(s)));
+      setStatus(`Loaded ${students.length} students.`);
+      renderNote();
+    } catch(e){
+      console.error('Attendance load failed:', e);
+      setStatus('Failed to load attendance.');
+    }
+  }
+
+  // Actions
+  loadBtn?.addEventListener('click', loadAttendance);
+  dateInput?.addEventListener('change', loadAttendance);
+  markAllBtn?.addEventListener('click', () => {
+    students.forEach(s => { stateMap[s.uid] = { present: true, displayName: s.displayName }; });
+    // update checkboxes
+    document.querySelectorAll('.att-present').forEach(inp => { inp.checked = true; });
+    dirty = true;
+  });
+  clearAllBtn?.addEventListener('click', () => {
+    students.forEach(s => { stateMap[s.uid] = { present: false, displayName: s.displayName }; });
+    document.querySelectorAll('.att-present').forEach(inp => { inp.checked = false; });
+    dirty = true;
+  });
+  saveBtn?.addEventListener('click', async () => {
+    if (!dirty) { setSaveStatus('No changes.'); return; }
+    try {
+      const records = students.map(s => ({ uid: s.uid, present: !!(stateMap[s.uid]?.present), displayName: s.displayName }));
+      await (window.__fb_saveAttendanceBulk ? window.__fb_saveAttendanceBulk(dateKey(), records) : Promise.resolve());
+      setSaveStatus('Saved ✔');
+      dirty = false;
+    } catch(e){
+      console.error('Attendance save failed:', e);
+      setSaveStatus('Save failed.');
+    }
+  });
+
+  // Initial load
+  loadAttendance();
+})();

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Japanese Vocab MCQ Practice</title>
+  <title>Basic Robotics – Educational Course Portal</title>
   <link rel="stylesheet" href="style.css" />
   <link rel="icon" href="data:," />
 </head>
@@ -12,7 +12,7 @@
   <div id="auth-gate" class="auth-gate">
     <div class="auth-card">
       <h1>Sign in to continue</h1>
-      <p class="muted">Use your Google account to save progress and continue.</p>
+      <p class="muted">Use your Google account to access lectures, practice, and your portal.</p>
       <button id="auth-btn">🔐 Sign in with Google</button>
       <p id="auth-error" class="error" style="display:none;"></p>
     </div>
@@ -22,18 +22,17 @@
   <div id="app-root" class="layout hidden">
     <nav class="sidebar">
       <h2>📘 Menu</h2>
-      <button onclick="showSection('deck-select')">📚 Vocab</button>
-      <button onclick="showSection('grammar-section')">📖 Grammar</button>
+      <button onclick="showSection('practice-select')">📝 Practice</button>
+      <button onclick="showSection('lectures-section')">📖 Lectures</button>
       <button onclick="showSection('progress-section')">📈 Progress</button>
-      <button onclick="showSection('overall-leaderboard-section')">🏆 Overall Leaderboard</button>
-      <button onclick="showSection('todays-leaderboard-section')">📅 Today’s Leaderboard</button>
+      <button onclick="showSection('course-leaderboard-section')">🏆 Course Leaderboard</button>
+      <button onclick="showSection('weekly-leaderboard-section')">📅 Weekly Leaderboard</button>
+      <button onclick="showSection('attendance-section')">🗒️ Attendance</button>
+      <button onclick="showSection('simulation-section')">🔧 Simulation</button>
       <button onclick="showSection('mistakes-section')">❗ Mistakes</button>
-      <!-- NEW: Save Progress moved to navbar -->
-      <button onclick="saveCurrentScore()">💾 Save Progress</button>
-      <button onclick="resetSite()">🔁 Reset</button>
     </nav>
 
-    <!-- To-Do flyout (shown/hidden by firebase.js) -->
+    <!-- Tasks flyout (kept as-is; useful for teachers to assign tasks) -->
     <div id="todo-flyout" class="todo-flyout hidden">
       <div class="todo-head">
         <span>Today’s To-Dos</span>
@@ -49,7 +48,7 @@
 
     <div class="main-content">
       <header>
-        <h1>Japanese Vocabulary Practice</h1>
+        <h1>Educational Course Portal</h1>
         <div id="score">
           ✅ Correct: <span id="correct">0</span>
           ❌ Wrong: <span id="wrong">0</span>
@@ -58,30 +57,15 @@
       </header>
 
       <main>
-        <!-- Vocab -->
-        <section id="deck-select">
-          <h2>Vocab</h2>
-          <p id="deck-status" class="muted" style="margin:8px 0"></p>
-          <div id="deck-buttons"></div>
+        <!-- Practice Select -->
+        <section id="practice-select">
+          <h2>Practice</h2>
+          <p id="practice-status" class="muted" style="margin:8px 0"></p>
+          <div id="practice-buttons"></div>
         </section>
 
-        <!-- Mode -->
-        <section id="mode-select" class="hidden">
-          <h2>Select Mode</h2>
-          <button onclick="startLearnMode()">🧠 Learn</button>
-          <button onclick="startPractice('jp-en')">Japanese → English</button>
-          <button onclick="startPractice('en-jp')">English → Japanese</button>
-        </section>
-
-        <!-- Learn -->
-        <section id="learn" class="hidden">
-          <div id="learn-box"></div>
-          <button onclick="nextLearn()">Next</button>
-        </section>
-
-        <!-- Practice -->
+        <!-- Practice Runner -->
         <section id="practice" class="hidden">
-          <!-- NEW: Deck progress -->
           <div id="deck-progress" class="deck-progress">
             <div class="deck-progress-bar" id="deck-progress-bar"></div>
             <div class="deck-progress-text" id="deck-progress-text">0 / 0 (0%)</div>
@@ -91,18 +75,15 @@
           <ul id="options"></ul>
           <div class="practice-actions">
             <button onclick="skipQuestion()">Skip</button>
-            <button onclick="showRomaji()">👁 Show Romaji</button>
-            <button onclick="showMeaning()">💡 Show Meaning</button>
-            <!-- Removed the Save button from here -->
           </div>
           <div id="extra-info" style="margin-top: 10px; font-size: 16px;"></div>
         </section>
 
-        <!-- Grammar -->
-        <section id="grammar-section" class="hidden">
-          <h2>Grammar Lessons</h2>
-          <p id="grammar-status" class="muted" style="margin:8px 0"></p>
-          <div id="grammar-list"></div>
+        <!-- Lectures -->
+        <section id="lectures-section" class="hidden">
+          <h2>Lectures</h2>
+          <p id="lectures-status" class="muted" style="margin:8px 0"></p>
+          <div id="lectures-list"></div>
         </section>
 
         <!-- Progress -->
@@ -115,7 +96,7 @@
               <div id="progress-last">No attempts yet.</div>
             </div>
             <div class="card">
-              <h3>Previous Attempt (same deck)</h3>
+              <h3>Previous Attempt (same set)</h3>
               <div id="progress-prev">—</div>
             </div>
             <div class="card">
@@ -129,7 +110,7 @@
             <table id="progress-table" class="progress-table">
               <thead>
                 <tr>
-                  <th>Date</th><th>Deck</th><th>Mode</th>
+                  <th>Date</th><th>Set</th><th>Mode</th>
                   <th>Right</th><th>Wrong</th><th>Skipped</th><th>Total</th>
                 </tr>
               </thead>
@@ -138,17 +119,57 @@
           </div>
         </section>
 
-        <!-- Overall Leaderboard -->
-        <section id="overall-leaderboard-section" class="hidden">
-          <h2>🏆 Overall Leaderboard</h2>
-          <ul id="overall-leaderboard-list"></ul>
+        <!-- Course Leaderboard (overall) -->
+        <section id="course-leaderboard-section" class="hidden">
+          <h2>🏆 Course Leaderboard</h2>
+          <ul id="course-leaderboard-list"></ul>
         </section>
 
-        <!-- Today’s Leaderboard -->
-        <section id="todays-leaderboard-section" class="hidden">
-          <h2>📅 Today’s Leaderboard</h2>
-          <ul id="todays-leaderboard-list"></ul>
+        <!-- Weekly Leaderboard -->
+        <section id="weekly-leaderboard-section" class="hidden">
+          <h2>📅 Weekly Leaderboard</h2>
+          <ul id="weekly-leaderboard-list"></ul>
         </section>
+
+        <!-- Simulation -->
+        <section id="simulation-section" class="hidden">
+          <h2>🔧 Simulation</h2>
+          <p class="muted">Use Tinkercad to simulate circuits and microcontrollers.</p>
+          <a href="https://www.tinkercad.com/" target="_blank" rel="noopener">
+            <button>Open Tinkercad</button>
+          </a>
+        </section>
+
+        
+        <!-- Attendance -->
+        <section id="attendance-section" class="hidden">
+          <h2>🗒️ Attendance</h2>
+          <div class="attendance-controls">
+            <label for="attendance-date"><b>Date</b></label>
+            <input type="date" id="attendance-date" />
+            <button id="attendance-load">Load</button>
+            <span id="attendance-status" class="muted"></span>
+          </div>
+          <div class="table-wrap">
+            <table id="attendance-table" class="progress-table">
+              <thead>
+                <tr>
+                  <th style="min-width:220px;">Student</th>
+                  <th>Present?</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div class="attendance-actions">
+            <button id="attendance-mark-all">Mark All Present</button>
+            <button id="attendance-clear-all">Clear All</button>
+            <button id="attendance-save">Save Changes</button>
+            <span id="attendance-save-status" class="muted"></span>
+          </div>
+          <p class="muted" id="attendance-note"></p>
+        </section>
+    
 
         <!-- Mistakes -->
         <section id="mistakes-section" class="hidden">
