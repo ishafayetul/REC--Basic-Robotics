@@ -767,3 +767,74 @@ window.__fb_adminDeleteUser = async function(uid){
   await deleteDoc(doc(db,'users',uid));
   return true;
 };
+
+// ——— expose ISO week helper for the rest of the app ———
+window.__getISOWeek = getISOWeek; // now script.js (or others) can call window.__getISOWeek()
+
+// Small util so we never pass an undefined weekKey into Firestore paths
+function _wk(key) { return key || getISOWeek(new Date()); }
+
+// —— TASKS / EXAMS: make weekKey optional everywhere ——
+
+// List tasks (admin + student)
+const _old_listTasks = window.__fb_listTasks;
+window.__fb_listTasks = async function(weekKey){
+  const wk = _wk(weekKey);
+  const qy = query(collection(db,'tasks', wk, 'items'), orderBy('createdAt','asc'));
+  const snap = await getDocs(qy);
+  const arr = [];
+  snap.forEach(d => arr.push({ id: d.id, ...(d.data()||{}) }));
+  return arr;
+};
+
+// Submit a task link (student)
+const _old_submitTask = window.__fb_submitTask;
+window.__fb_submitTask = async function(weekKey, taskId, linkUrl){
+  const user = auth.currentUser; if (!user) throw new Error('Not signed in');
+  const wk = _wk(weekKey);
+  await setDoc(doc(db,'tasks',wk,'items',taskId,'submissions', user.uid), {
+    link: (linkUrl||'').trim(),
+    submittedAt: serverTimestamp()
+  }, { merge: true });
+};
+
+// List my submissions (student)
+const _old_listMySubs = window.__fb_listMySubmissions;
+window.__fb_listMySubmissions = async function(weekKey){
+  const user = auth.currentUser; if (!user) return {};
+  const wk = _wk(weekKey);
+  const subs = {};
+  const itemsSnap = await getDocs(collection(db,'tasks', wk, 'items'));
+  for (const item of itemsSnap.docs) {
+    const sRef = doc(db,'tasks', wk,'items', item.id, 'submissions', user.uid);
+    const sSnap = await getDoc(sRef);
+    if (sSnap.exists()) subs[item.id] = sSnap.data();
+  }
+  return subs;
+};
+
+// Score a submission (teacher)
+const _old_scoreSubmission = window.__fb_scoreSubmission;
+window.__fb_scoreSubmission = async function(weekKey, taskId, uid, score){
+  const wk = _wk(weekKey);
+  await setDoc(doc(db,'tasks', wk,'items',taskId,'submissions', uid), {
+    score: Number(score||0),
+    scoredAt: serverTimestamp()
+  }, { merge: true });
+};
+
+// Set weekly exam score (teacher)
+const _old_setExamScore = window.__fb_setExamScore;
+window.__fb_setExamScore = async function(weekKey, uid, score){
+  const wk = _wk(weekKey);
+  await setDoc(doc(db,'examScores', wk, 'users', uid), {
+    score: Number(score||0),
+    updatedAt: serverTimestamp()
+  }, { merge: true });
+};
+
+// —— Attendance wants only approved students (exclude admins) ——
+// Provide a stable alias that the UI already calls.
+if (!window.__fb_listStudents) {
+  window.__fb_listStudents = window.__fb_listApprovedStudents;
+}
