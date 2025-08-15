@@ -493,6 +493,25 @@ function shuffleArray(arr) {
   const histMeta = document.getElementById('attendance-history-meta');
   const histBody = document.querySelector('#attendance-history-table tbody');
 
+  const tabTake = document.getElementById('att-tab-take');
+  const tabHistory = document.getElementById('att-tab-history');
+  const paneTake = document.getElementById('att-pane-take');
+  const paneHistory = document.getElementById('att-pane-history');
+
+  tabTake?.addEventListener('click', () => {
+  tabTake.classList.add('active');
+  tabHistory.classList.remove('active');
+  paneTake.classList.remove('hidden');
+  paneHistory.classList.add('hidden');
+  });
+
+  tabHistory?.addEventListener('click', () => {
+  tabHistory.classList.add('active');
+  tabTake.classList.remove('active');
+  paneHistory.classList.remove('hidden');
+  paneTake.classList.add('hidden');
+  });
+
   const dateInput = document.getElementById('attendance-date');
   const loadBtn = document.getElementById('attendance-load');
   const tableBody = document.querySelector('#attendance-table tbody');
@@ -637,6 +656,36 @@ function shuffleArray(arr) {
     setStatus('Failed to load attendance.');
   }
 }
+
+async function loadHistoryAdmin() {
+  const histDateInput = document.getElementById('att-hist-date');
+  const dateKey = histDateInput.value;
+  const histBody = document.querySelector('#att-hist-table tbody');
+  const histMeta = document.getElementById('att-hist-meta');
+  histBody.innerHTML = '<tr><td colspan="2">Loading…</td></tr>';
+  try {
+    const studentsList = await (window.__fb_listStudents ? window.__fb_listStudents() : []);
+    const att = await (window.__fb_getAttendance ? window.__fb_getAttendance(dateKey) : {});
+    let presentCount = 0;
+    histBody.innerHTML = '';
+    studentsList.forEach(s => {
+      const isPresent = !!(att[s.uid]?.present);
+      if (isPresent) presentCount++;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${s.displayName || '(Unnamed)'}</td><td>${isPresent ? 'Present' : 'Absent'}</td>`;
+      histBody.appendChild(tr);
+    });
+    const absentCount = studentsList.length - presentCount;
+    const meta = await (window.__fb_getAttendanceMeta ? window.__fb_getAttendanceMeta(dateKey) : {});
+    const classNoTxt = meta?.classNo ? `Class No: ${meta.classNo} · ` : '';
+    histMeta.textContent = `${classNoTxt}Present: ${presentCount} · Absent: ${absentCount} · Total: ${studentsList.length}`;
+  } catch (e) {
+    console.error(e);
+    histBody.innerHTML = '<tr><td colspan="2">Failed to load.</td></tr>';
+  }
+}
+document.getElementById('att-hist-load')?.addEventListener('click', loadHistoryAdmin);
+
 
 
 

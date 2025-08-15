@@ -143,54 +143,73 @@
         <!-- Attendance -->
         <section id="attendance-section" class="hidden">
           <h2>🗒️ Attendance</h2>
-          <!-- Admin controls -->
-          <div id="attendance-admin-controls" class="attendance-controls">
-            <label for="attendance-date"><b>Date</b></label>
-            <input type="date" id="attendance-date" />
-            <label for="attendance-classno"><b>Class No</b></label>
-            <select id="attendance-classno" style="max-width:140px;">
-              <option value="">—</option>
-              <option>1</option><option>2</option><option>3</option><option>4</option>
-              <option>5</option><option>6</option><option>7</option><option>8</option>
-              <option>9</option><option>10</option><option>11</option><option>12</option>
-              <option>13</option><option>14</option><option>15</option><option>16</option>
-            </select>
-            <button id="attendance-load">Load</button>
-            <span id="attendance-status" class="muted"></span>
-          </div>
-          <div id="attendance-admin-table-wrap" class="table-wrap">
-            <table id="attendance-table" class="progress-table">
-              <thead>
-                <tr>
-                  <th style="min-width:220px;">Student</th>
-                  <th>Present?</th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
-          </div>
-          <div id="attendance-admin-actions" class="attendance-actions">
-            <button id="attendance-mark-all">Mark All Present</button>
-            <button id="attendance-clear-all">Clear All</button>
-            <button id="attendance-save">Save Changes</button>
-            <span id="attendance-save-status" class="muted"></span>
-          </div>
-          <div id="attendance-history" class="table-wrap" style="margin-top:12px;">
-            <h3>History (Selected Date)</h3>
-            <div class="muted" id="attendance-history-meta">—</div>
-            <table id="attendance-history-table" class="progress-table" style="margin-top:6px;">
-              <thead>
-                <tr>
-                  <th style="min-width:220px;">Student</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
-          </div>
-          <p class="muted" id="attendance-note"></p>
 
-          <!-- Student-only view -->
+          <!-- Tab Buttons -->
+          <div class="attendance-controls">
+            <button id="att-tab-take" class="active">Take Attendance</button>
+            <button id="att-tab-history">Attendance History</button>
+          </div>
+
+          <!-- TAKE ATTENDANCE PANE -->
+          <div id="att-pane-take">
+            <div id="attendance-admin-controls" class="attendance-controls">
+              <label for="attendance-date"><b>Date</b></label>
+              <input type="date" id="attendance-date" />
+              <label for="attendance-classno"><b>Class No</b></label>
+              <select id="attendance-classno" style="max-width:140px;">
+                <option value="">—</option>
+                <option>1</option><option>2</option><option>3</option><option>4</option>
+                <option>5</option><option>6</option><option>7</option><option>8</option>
+                <option>9</option><option>10</option><option>11</option><option>12</option>
+                <option>13</option><option>14</option><option>15</option><option>16</option>
+              </select>
+              <button id="attendance-load">Load</button>
+              <span id="attendance-status" class="muted"></span>
+            </div>
+
+            <div id="attendance-admin-table-wrap" class="table-wrap">
+              <table id="attendance-table" class="progress-table">
+                <thead>
+                  <tr>
+                    <th style="min-width:220px;">Student</th>
+                    <th>Present?</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+
+            <div id="attendance-admin-actions" class="attendance-actions">
+              <button id="attendance-mark-all">Mark All Present</button>
+              <button id="attendance-clear-all">Clear All</button>
+              <button id="attendance-save">Save Changes</button>
+              <span id="attendance-save-status" class="muted"></span>
+            </div>
+            <p class="muted" id="attendance-note"></p>
+          </div>
+
+          <!-- ATTENDANCE HISTORY PANE -->
+          <div id="att-pane-history" class="hidden">
+            <div class="attendance-controls">
+              <label for="att-hist-date"><b>Date</b></label>
+              <input type="date" id="att-hist-date" />
+              <button id="att-hist-load">Load History</button>
+            </div>
+            <div class="table-wrap">
+              <table id="att-hist-table" class="progress-table">
+                <thead>
+                  <tr>
+                    <th>Student</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div class="muted" id="att-hist-meta">—</div>
+          </div>
+
+          <!-- Student-only -->
           <div id="attendance-student-view" class="hidden">
             <h3>Your Attendance History</h3>
             <div class="table-wrap">
@@ -205,9 +224,10 @@
                 <tbody></tbody>
               </table>
             </div>
-            <p class="muted">Only you can see your own records. Admins can manage class attendance.</p>
+            <p class="muted">Only you can see your own records.</p>
           </div>
         </section>
+
 
         <!-- Mistakes -->
         <section id="mistakes-section" class="hidden">
