@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Basic Robotics – Educational Course Portal</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:," />
+</head>
+<body>
+  <!-- Auth gate -->
+  <div id="auth-gate" class="auth-gate">
+    <div class="auth-card">
+      <h1>Sign in to continue</h1>
+      <p class="muted">Use your Google account to access lectures, practice, and your portal.</p>
+      <button id="auth-btn">🔐 Sign in with Google</button>
+      <p id="auth-error" class="error" style="display:none;"></p>
+    </div>
+  </div>
+
+  <!-- App (hidden until signed in) -->
+  <div id="app-root" class="layout hidden">
+    <nav class="sidebar">
+      <h2>📘 Menu</h2>
+      <button onclick="showSection('practice-select')">📝 Practice</button>
+      <button onclick="showSection('lectures-section')">📖 Lectures</button>
+      <button onclick="showSection('progress-section')">📈 Progress</button>
+      <button onclick="showSection('course-leaderboard-section')">🏆 Course Leaderboard</button>
+      <button onclick="showSection('weekly-leaderboard-section')">📅 Weekly Leaderboard</button>
+      <button onclick="showSection('simulation-section')">🔧 Simulation</button>
+      <button onclick="showSection('mistakes-section')">❗ Mistakes</button>
+    </nav>
+
+    <!-- Tasks flyout (kept as-is; useful for teachers to assign tasks) -->
+    <div id="todo-flyout" class="todo-flyout hidden">
+      <div class="todo-head">
+        <span>Today’s To-Dos</span>
+        <span id="todo-timer" class="todo-timer">00:00:00</span>
+      </div>
+      <ul id="todo-list" class="todo-list"></ul>
+      <!-- Only visible to admins (firebase.js toggles this row) -->
+      <div id="admin-row" class="admin-row hidden">
+        <input id="admin-task-input" placeholder="Add a task for everyone today…" />
+        <button id="admin-task-add">Add</button>
+      </div>
+    </div>
+
+    <div class="main-content">
+      <header>
+        <h1>Educational Course Portal</h1>
+        <div id="score">
+          ✅ Correct: <span id="correct">0</span>
+          ❌ Wrong: <span id="wrong">0</span>
+          ➖ Skipped: <span id="skipped">0</span>
+        </div>
+      </header>
+
+      <main>
+        <!-- Practice Select -->
+        <section id="practice-select">
+          <h2>Practice</h2>
+          <p id="practice-status" class="muted" style="margin:8px 0"></p>
+          <div id="practice-buttons"></div>
+        </section>
+
+        <!-- Practice Runner -->
+        <section id="practice" class="hidden">
+          <div id="deck-progress" class="deck-progress">
+            <div class="deck-progress-bar" id="deck-progress-bar"></div>
+            <div class="deck-progress-text" id="deck-progress-text">0 / 0 (0%)</div>
+          </div>
+
+          <div id="question-box"></div>
+          <ul id="options"></ul>
+          <div class="practice-actions">
+            <button onclick="skipQuestion()">Skip</button>
+          </div>
+          <div id="extra-info" style="margin-top: 10px; font-size: 16px;"></div>
+        </section>
+
+        <!-- Lectures -->
+        <section id="lectures-section" class="hidden">
+          <h2>Lectures</h2>
+          <p id="lectures-status" class="muted" style="margin:8px 0"></p>
+          <div id="lectures-list"></div>
+        </section>
+
+        <!-- Progress -->
+        <section id="progress-section" class="hidden">
+          <h2>📈 Your Progress</h2>
+
+          <div class="progress-grid">
+            <div class="card">
+              <h3>Last Attempt</h3>
+              <div id="progress-last">No attempts yet.</div>
+            </div>
+            <div class="card">
+              <h3>Previous Attempt (same set)</h3>
+              <div id="progress-prev">—</div>
+            </div>
+            <div class="card">
+              <h3>Delta</h3>
+              <div id="progress-delta">—</div>
+            </div>
+          </div>
+
+          <h3 style="margin-top:18px;">Recent Attempts</h3>
+          <div class="table-wrap">
+            <table id="progress-table" class="progress-table">
+              <thead>
+                <tr>
+                  <th>Date</th><th>Set</th><th>Mode</th>
+                  <th>Right</th><th>Wrong</th><th>Skipped</th><th>Total</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Course Leaderboard (overall) -->
+        <section id="course-leaderboard-section" class="hidden">
+          <h2>🏆 Course Leaderboard</h2>
+          <ul id="course-leaderboard-list"></ul>
+        </section>
+
+        <!-- Weekly Leaderboard -->
+        <section id="weekly-leaderboard-section" class="hidden">
+          <h2>📅 Weekly Leaderboard</h2>
+          <ul id="weekly-leaderboard-list"></ul>
+        </section>
+
+        <!-- Simulation -->
+        <section id="simulation-section" class="hidden">
+          <h2>🔧 Simulation</h2>
+          <p class="muted">Use Tinkercad to simulate circuits and microcontrollers.</p>
+          <a href="https://www.tinkercad.com/" target="_blank" rel="noopener">
+            <button>Open Tinkercad</button>
+          </a>
+        </section>
+
+        <!-- Mistakes -->
+        <section id="mistakes-section" class="hidden">
+          <h2>Frequent Mistakes</h2>
+          <button onclick="startMistakePractice()">Practice Mistakes</button>
+          <button onclick="clearMistakes()">Clear Mistakes</button>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <!-- IMPORTANT: Firebase before your app logic -->
+  <script type="module" src="firebase.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>

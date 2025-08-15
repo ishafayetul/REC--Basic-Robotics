@@ -1,0 +1,285 @@
+/* =========================
+   Base / Resets
+   ========================= */
+:root{
+  --bg: #f7f8fa;
+  --text: #222;
+  --muted: #666;
+  --primary: #0d6efd;
+  --primary-hover: #0b5ed7;
+  --sidebar-bg: #2c3e50;
+  --sidebar-btn: #34495e;
+  --sidebar-btn-hover: #1abc9c;
+  --card: #fff;
+  --border: #e5e7eb;
+  --success: #d4edda;
+  --danger: #f8d7da;
+  --shadow: 0 10px 24px rgba(0,0,0,.12);
+  --green: #16a34a;
+  --red: #dc2626;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
+  color: var(--text);
+  background: var(--bg);
+  line-height: 1.4;
+}
+.hidden { display: none !important; }
+
+/* =========================
+   Layout
+   ========================= */
+.layout { min-height: 100vh; }
+.sidebar{
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  width: 220px;
+  background: var(--sidebar-bg);
+  color: #fff;
+  padding: 20px;
+  display: flex; flex-direction: column;
+}
+.main-content{
+  margin-left: 220px;
+  padding: 20px;
+}
+
+/* =========================
+   Typography / Headings
+   ========================= */
+h1 { margin: 0 0 8px; font-size: 28px; }
+h2 { margin: 20px 0 12px; font-size: 22px; }
+h3 { margin: 0 0 10px; font-size: 18px; }
+.muted { color: var(--muted); }
+.error { color: #b00020; margin-top: 10px; }
+
+/* =========================
+   Score
+   ========================= */
+#score { font-size: 16px; display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+#score span { font-weight: 700; }
+
+/* =========================
+   Sidebar buttons
+   ========================= */
+.sidebar h2 { font-size: 18px; margin-bottom: 18px; }
+.sidebar button{
+  background: var(--sidebar-btn);
+  color: #fff;
+  border: 0;
+  padding: 10px;
+  margin-bottom: 10px;
+  text-align: left;
+  border-radius: 8px;
+  font-size: 15px;
+  cursor: pointer;
+  transition: background .18s ease, transform .06s ease;
+}
+.sidebar button:hover{ background: var(--sidebar-btn-hover); }
+.sidebar button:active{ transform: translateY(1px); }
+
+/* =========================
+   Generic buttons
+   ========================= */
+button{
+  padding: 10px 18px;
+  margin: 6px;
+  cursor: pointer;
+  border: none;
+  background: var(--primary);
+  color: #fff;
+  border-radius: 8px;
+  font-size: 16px;
+  transition: background .18s ease, transform .06s ease, box-shadow .18s ease;
+}
+button:hover{ background: var(--primary-hover); }
+button:active{ transform: translateY(1px); }
+button:disabled { opacity: .6; cursor: not-allowed; }
+
+/* =========================
+   Practice actions
+   ========================= */
+.practice-actions{ display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+
+/* =========================
+   Practice set list / options
+   ========================= */
+#practice-buttons{ display:flex; flex-wrap:wrap; gap:10px; }
+#practice-buttons button{ border-radius: 999px; padding: 8px 14px; }
+
+#options{ list-style:none; padding:0; margin: 12px 0 0; }
+#options li{
+  margin: 8px 0;
+  padding: 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 18px;
+  transition: background .18s ease, border-color .18s ease;
+}
+#options li:hover{ background:#f2f4f7; }
+.correct{ background: var(--success) !important; }
+.wrong{ background: var(--danger) !important; }
+
+/* =========================
+   Leaderboards
+   ========================= */
+#course-leaderboard-list,
+#weekly-leaderboard-list{ list-style:none; padding-left:0; }
+#course-leaderboard-list li,
+#weekly-leaderboard-list li{
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  box-shadow: var(--shadow);
+}
+.lb-row{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.lb-rank{ width:48px; font-weight:700; }
+.lb-name{ min-width:150px; font-weight:600; }
+.lb-part{ color:#333; }
+.lb-score{ margin-left:auto; font-weight:700; }
+
+/* =========================
+   Progress
+   ========================= */
+.progress-grid{
+  display:grid;
+  grid-template-columns: repeat(3, minmax(0,1fr));
+  gap:12px;
+}
+.card{
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: var(--shadow);
+}
+.table-wrap{ overflow:auto; }
+.progress-table{
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.progress-table th, .progress-table td{
+  font-size: 14px;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 10px;
+  text-align: left;
+}
+.progress-table thead th{ background:#f3f4f6; }
+.delta-up{ color: var(--green); font-weight: 700; }
+.delta-down{ color: var(--red); font-weight: 700; }
+
+/* =========================
+   Auth gate
+   ========================= */
+.auth-gate{
+  position: fixed; inset: 0;
+  display: grid; place-items: center;
+  background: #0f172a;
+  z-index: 9999;
+}
+.auth-card{
+  background:#fff;
+  border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.25);
+  padding: 28px;
+  width: min(420px, calc(100% - 40px));
+  text-align: center;
+}
+
+/* =========================
+   To-Do flyout (bottom-right)
+   ========================= */
+.todo-flyout{
+  position: fixed;
+  bottom: 12px;
+  right: 12px;
+  width: 360px;
+  max-height: 45vh;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  z-index: 500;
+  padding: 14px;
+}
+.todo-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; font-weight:600; }
+.todo-timer{
+  padding:2px 8px; border-radius:999px; background:#0ea5e9; color:#fff; font-weight:700;
+  font-variant-numeric: tabular-nums;
+}
+.todo-list{ list-style:none; padding:0; margin:0; max-height: 40vh; overflow:auto; }
+.todo-item{ display:flex; align-items:center; gap:10px; padding:8px; border-radius:8px; }
+.todo-item:hover{ background:#f6f8fa; }
+.todo-empty{ color:var(--muted); padding:6px; }
+.admin-row{ display:flex; gap:8px; margin-top:10px; border-top:1px dashed #e2e8f0; padding-top:10px; }
+.admin-row input{ flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:8px; }
+
+/* =========================
+   Responsive
+   ========================= */
+@media (max-width: 900px){
+  .todo-flyout{ position: static; width:100%; margin:10px 0 0; }
+}
+
+@media (max-width: 768px){
+  .sidebar{
+    position: static;
+    width: 100%;
+    height: auto;
+    flex-direction: row;
+    gap: 6px;
+    overflow-x: auto;
+  }
+  .main-content{ margin-left: 0; }
+  .sidebar button{ white-space: nowrap; font-size: 14px; text-align: center; }
+  h1{ font-size: 24px; }
+  h2{ font-size: 20px; }
+  #options li{ font-size: 16px; }
+  .progress-grid{ grid-template-columns: 1fr; }
+}
+
+@media (max-width: 480px){
+  .sidebar{ flex-wrap: wrap; gap: 6px; }
+  .sidebar button{ min-width: 120px; font-size: 13px; padding: 8px; }
+  button{ font-size: 14px; }
+  #options li{ font-size: 15px; }
+}
+
+/* Reserve room so content isn't covered by the fixed flyout on desktop */
+@media (min-width: 769px){
+  .main-content{ padding-bottom: 360px; }
+}
+
+/* Practice progress */
+.deck-progress{
+  margin: 8px 0 12px;
+  background: #eef2ff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.deck-progress-bar{
+  height: 10px;
+  width: 0%;
+  background: var(--primary);
+  transition: width .25s ease;
+}
+.deck-progress-text{
+  padding: 8px 10px;
+  font-size: 14px;
+  color: #111;
+}
