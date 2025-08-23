@@ -46,7 +46,10 @@ const provider = new GoogleAuthProvider();
 // Helpers
 // -------------------------
 const $ = (id) => document.getElementById(id);
-const UI = window.__UI || { onAuth() {}, onRoleChange() {}, onApprovalChange() {} };
+const _uiStub = { onAuth() {}, onRoleChange() {}, onApprovalChange() {} };
+const getUI = () => (window.__UI || _uiStub);
+let __lastAuth = null; // keep last computed auth state to replay later
+
 
 function isoDate(d = new Date()) {
   const y = d.getFullYear();
@@ -159,27 +162,32 @@ async function signOutNow() {
 onAuthStateChanged(auth, async (user) => {
   try {
     if (!user) {
-      UI.onAuth({ user: null, isAdmin: false, approved: false });
+      __lastAuth = { user: null, isAdmin: false, approved: false };
+      getUI().onAuth(__lastAuth);
       return;
     }
+
     const profile = await ensureUserProfile(user);
     const isAdmin = !!profile.isAdmin;
     const approved = isAdmin || !!profile.approved;
 
-    UI.onAuth({ user, isAdmin, approved });
-    UI.onRoleChange?.({ isAdmin });
-    UI.onApprovalChange?.({ approved });
+    __lastAuth = { user, isAdmin, approved };
+    getUI().onAuth(__lastAuth);
+    getUI().onRoleChange?.({ isAdmin });
+    getUI().onApprovalChange?.({ approved });
 
-    // Toggle admin/ student UI blocks here as a safety (index already hides)
+    // safety toggle for buttons (in case UI wasn't wired yet)
     document.querySelectorAll('.admin-only').forEach(el => {
       el.classList.toggle('hidden', !isAdmin);
     });
 
   } catch (e) {
     console.error('[auth]', e);
-    UI.onAuth({ user: null, isAdmin: false, approved: false });
+    __lastAuth = { user: null, isAdmin: false, approved: false };
+    getUI().onAuth(__lastAuth);
   }
 });
+
 
 // -------------------------
 // Section visibility hooks
@@ -792,5 +800,14 @@ const adapters = {
 
 // Bind adapters for script.js
 window.__bindFirebaseAdapters?.(adapters);
+// If UI got attached after auth event, replay state once.
+if (__lastAuth) {
+  try {
+    getUI().onAuth(__lastAuth);
+    getUI().onRoleChange?.({ isAdmin: !!__lastAuth.isAdmin });
+    getUI().onApprovalChange?.({ approved: !!__lastAuth.approved });
+  } catch {}
+}
+
 
 // End: nothing else to export
