@@ -22,14 +22,15 @@ import {
 // -------------------------
 // Config (public by design)
 // -------------------------
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  // TODO: keep your existing config here (keys are safe client-side)
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  projectId: "YOUR_PROJECT",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "xxxxxxxxxxxx",
-  appId: "1:xxxxxxxxxxxx:web:xxxxxxxxxxxxxxxx"
+  apiKey: "AIzaSyAtA3TIhy7cKG-r8Ru3LmaKQqhq9T9QAVE",
+  authDomain: "rec-basic-robotics-2.firebaseapp.com",
+  projectId: "rec-basic-robotics-2",
+  storageBucket: "rec-basic-robotics-2.firebasestorage.app",
+  messagingSenderId: "699504573776",
+  appId: "1:699504573776:web:93335a0025a3a009de8055",
+  measurementId: "G-GT00NG7TEL"
 };
 
 // -------------------------
