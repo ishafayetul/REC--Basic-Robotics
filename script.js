@@ -1,1619 +1,1372 @@
-// script.js — UI glue for Practice, Lectures, Progress, Approvals, Attendance, Tasks, Submissions
-// All Firebase operations are done via helpers exposed by firebase.js (window.__fb_*).
+/* =========================================================
+   Basic Robotics – script.js
+   Role: UI + Router + Rendering (no direct Firestore I/O)
+   Firestore access is delegated to firebase.js adapters.
+   ========================================================= */
 
-/* =========================
-   Global state
-   ========================= */
-let allSets = {};                // { setName: [{q, options:[...], correctIndex:0}] }
-let currentSet = [];
-let currentSetName = "";
-let currentIndex = 0;
-let score = { correct: 0, wrong: 0, skipped: 0 };
+(() => {
+  'use strict';
 
-let mistakes = JSON.parse(localStorage.getItem("mistakes") || "[]");
-let masteryMap = JSON.parse(localStorage.getItem("masteryMap") || "{}");
-
-let sessionBuf = JSON.parse(localStorage.getItem("sessionBuf") || "null") || {
-  deckName: "",
-  mode: "mcq",
-  correct: 0,
-  wrong: 0,
-  skipped: 0,
-  total: 0,
-  jpEnCorrect: 0,
-  enJpCorrect: 0
-};
-
-let currentSectionId = "practice-select";
-let committing = false;
-
-/* =========================
-   Resume state (per deck)
-   ========================= */
-// Stored as: { [setName]: { index:number, total:number } }
-let resumeMap = JSON.parse(localStorage.getItem("practiceResume") || "{}");
-
-function getResume(setName){
-  const r = resumeMap[setName];
-  if (!r || typeof r.index !== "number") return null;
-  return r;
-}
-function setResume(setName, index, total){
-  resumeMap[setName] = {
-    index: Math.max(0, index|0),
-    total: (total|0) || (allSets[setName]?.length || 0)
+  /* -------------------------------------------------------
+   * Globals kept intentionally small + namespaced
+   * ----------------------------------------------------- */
+  const APP = {
+    booted: false,
+    currentSection: null,
+    lastSection: null,
+    sections: new Map(), // id -> {enter, exit}
+    cache: {
+      questionsManifest: null, // questions.json
+      lecturesList: null,      // lectures.json
+      decks: new Map(),        // deckName -> array of Qs
+    },
+    ui: {
+      toastContainer: null,
+      srStatus: null,
+      score: { correct: 0, wrong: 0, skipped: 0 },
+      progressBar: null,
+      progressText: null,
+      softRefreshBtn: null,
+    },
+    run: {
+      mode: null,           // 'practice' | 'mistakes'
+      deckName: null,
+      questions: [],
+      index: 0,
+      correct: 0,
+      wrong: 0,
+      skipped: 0,
+      optionsPerQ: 4,
+    },
+    meter: {
+      reads: 0,
+      writes: 0,
+      deletes: 0,
+      logTimer: null
+    },
+    // Firebase adapter is injected by firebase.js later
+    FB: {
+      // auth/ui gates
+      signIn: () => {},
+      signOut: () => {},
+      // lifecycle; firebase.js should call these UI hooks:
+      // UI.onAuth({ user, isAdmin, approved })
+      // UI.onRoleChange({ isAdmin })
+      // UI.onApprovalChange({ approved })
+      // practice/session
+      commitSession: async (_payload) => {},
+      // tasks
+      fetchWeekTasksStudent: async () => ([]),
+      toggleTaskCompletion: async (_taskId, _checked) => {},
+      // admin tasks
+      fetchWeekTasksAdmin: async () => ([]),
+      createTask: async (_task) => {},
+      deleteTask: async (_taskId) => {},
+      // progress
+      fetchStudentProgress: async () => ({}),
+      fetchAllApprovedStudents: async () => ([]),
+      fetchAdminStudentProgress: async (_uid) => ({}),
+      // leaderboards
+      fetchCourseLeaderboard: async () => ([]),
+      subscribeWeeklyLeaderboard: (_cb) => ({ unsubscribe: () => {} }),
+      // submissions (admin)
+      fetchTasksForSelect: async () => ([]),
+      fetchSubmissionsForTask: async (_taskId) => ([]),
+      scoreSubmission: async (_taskId, _uid, _score) => {},
+      // attendance
+      fetchStudentAttendance: async (_uid) => ([]),
+      loadAttendanceAdmin: async (_date) => ([]), // [{uid, name, present}]
+      saveAttendanceAdmin: async (_date, _classNo, _rows) => ({writes: 0}),
+      loadAttendanceHistoryAdmin: async (_date) => ([]),
+      // approvals/admin
+      fetchApprovals: async () => ([]),
+      approveUser: async (_uid) => {},
+      // manage students
+      fetchStudentsForManage: async () => ([]),
+      resetStudent: async (_uid) => ({writes:0, deletes:0}),
+      deleteStudent: async (_uid) => ({writes:0, deletes:0}),
+      // reset DB (admin)
+      resetDatabase: async () => ({ writes: 0, deletes: 0 }),
+      // subscriptions lifecycle
+      onSectionEnter: async (_id) => {},
+      onSectionExit: async (_id) => {},
+    }
   };
-  localStorage.setItem("practiceResume", JSON.stringify(resumeMap));
-}
-function clearResume(setName){
-  delete resumeMap[setName];
-  localStorage.setItem("practiceResume", JSON.stringify(resumeMap));
-}
 
-/* =========================
-   Tiny helpers
-   ========================= */
-const $ = (id) => document.getElementById(id);
-const setText = (id, txt) => { const el = $(id); if (el) el.innerText = txt; };
-function statusLine(id, msg) { const s = $(id); if (s) s.textContent = msg; }
-function persistSession() { localStorage.setItem("sessionBuf", JSON.stringify(sessionBuf)); }
-function percent(n, d) { return !d ? 0 : Math.floor((n / d) * 100); }
-function shuffleArray(arr) { for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } return arr; }
+  // Expose meter so firebase.js can increment real costs
+  window.__meter_read  = (n = 1) => { APP.meter.reads += n; };
+  window.__meter_write = (n = 1) => { APP.meter.writes += n; };
+  window.__meter_delete = (n = 1) => { APP.meter.deletes += n; };
 
-/* =========================
-   Restart helper (uses resume state)
-   ========================= */
-function restartDeck(name){
-  clearResume(name); // wipe resume pointer
-
-  currentSet = allSets[name] || [];
-  currentSetName = name;
-  currentIndex = 0;
-
-  score = { correct: 0, wrong: 0, skipped: 0 };
-  sessionBuf = {
-    deckName: name, mode: "mcq",
-    correct: 0, wrong: 0, skipped: 0, total: 0,
-    jpEnCorrect: 0, enJpCorrect: 0
+  // Allow firebase.js to inject its adapter safely
+  window.__bindFirebaseAdapters = function bindFirebaseAdapters(fbAdapters) {
+    APP.FB = Object.assign(APP.FB, fbAdapters || {});
+    console.debug('[adapter] Firebase adapters bound.');
   };
-  persistSession();
 
-  showSection("practice");
-  showQuestion();
-  updateScore();
-  updateDeckProgress();
+  /* -------------------------------------------------------
+   * Utilities
+   * ----------------------------------------------------- */
+  const $ = (id) => document.getElementById(id);
+  const bySel = (sel, root = document) => root.querySelector(sel);
+  const bySelAll = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-  const hint = $("resume-hint");
-  if (hint) hint.textContent = "";
-}
-
-
-/* =========================
-   Lifecycle
-   ========================= */
-window.onload = () => {
-  // Hide the countdown badge if present
-  const timer = $("todo-timer"); if (timer) timer.style.display = "none";
-
-  loadPracticeManifest();
-  loadLecturesManifest();
-  renderProgress();
-  wireApprovals();
-  wireTasks();
-  wireManageStudents();
-  wireAdminSubmissions(); // new admin-only section
-  initAttendance(); // sets up attendance tabs + handlers
-  updateScore();
-  wireAdminResetDB();
-  wireSoftRefreshButton();
-
-};
-
-// Called by firebase.js once auth/admin resolved
-window.__initAfterLogin = () => {
-  // Refresh admin-dependent UIs
-  wireApprovals();
-  wireTasks();
-  wireManageStudents();
-  wireAdminSubmissions();
-  renderProgress();
-  wireProgressCombined();
-  // Hide admin-only nav items for students
-  applyAdminNavVisibility(!!window.__isAdmin);
-  wireAdminResetDB();
-  wireSoftRefreshButton();
-
-};
-
-// Persist pending session safely on leave (firebase.js will try to commit next launch)
-["pagehide", "beforeunload"].forEach(evt => {
-  window.addEventListener(evt, () => {
-    try { if (sessionBuf.total > 0) localStorage.setItem('pendingSession', JSON.stringify(sessionBuf)); } catch {}
-  });
-});
-
-/* =========================
-   Router
-   ========================= */
-function showSection(id) {
-  // Leaving Practice? autosave buffered progress
-  if (currentSectionId === "practice" && id !== "practice") {
-    autoCommitIfNeeded("leaving practice");
+  function setHidden(el, hide = true) {
+    if (!el) return;
+    el.classList.toggle('hidden', !!hide);
   }
 
-  document.querySelectorAll('.main-content main > section').forEach(sec => sec.classList.add('hidden'));
-  const target = document.getElementById(id);
-  if (target) target.classList.remove('hidden');
-
-  currentSectionId = id;
-
-  if (id === "practice") updateDeckProgress();
-  if (id === "tasks-section") refreshTasksUI();
-  if (id === "progress-section") {
-    renderProgress();            // keep the old cards if you want
-    wireProgressCombined();      // new combined 4-column view
-    if (typeof window.__progress_refreshOnShow === 'function') window.__progress_refreshOnShow();
+  function safeText(s) {
+    return (s ?? '').toString();
   }
 
-  if (id === "attendance-section") {
-    if (typeof window.__att_refreshOnShow === 'function') window.__att_refreshOnShow();
+  function setSRStatus(msg) {
+    APP.ui.srStatus.textContent = msg;
   }
-  if (id === "admin-submissions-section") {
-    if (typeof window.__subs_refreshOnShow === 'function') window.__subs_refreshOnShow();
+
+  function toast(msg, type = 'success', ttl = 3000) {
+    const host = APP.ui.toastContainer;
+    if (!host) return;
+
+    const card = document.createElement('div');
+    card.className = `toast ${type}`;
+    card.textContent = msg;
+    host.appendChild(card);
+    // Force reflow to enable transition
+    requestAnimationFrame(() => card.classList.add('show'));
+
+    setTimeout(() => {
+      card.classList.remove('show');
+      setTimeout(() => card.remove(), 200);
+    }, ttl);
   }
-}
-window.showSection = showSection;
 
-/* =========================
-   Hide/Show admin items in sidebar
-   ========================= */
-function applyAdminNavVisibility(isAdmin) {
-  const sidebar = document.querySelector("nav.sidebar");
-  if (!sidebar) return;
+  function humanDate(dateStr) {
+    const d = (dateStr instanceof Date) ? dateStr : new Date(dateStr);
+    if (Number.isNaN(d.getTime())) return '—';
+    return d.toLocaleString();
+  }
 
-  // Show/hide every element marked admin-only (covers static nav + sections)
-  document.querySelectorAll('.admin-only').forEach(el => {
-    el.style.display = isAdmin ? '' : 'none';
-  });
+  // Console meter reporter (1x/min + after refreshAll)
+  function scheduleMeterLog() {
+    clearTimeout(APP.meter.logTimer);
+    APP.meter.logTimer = setTimeout(() => {
+      logMeter('[idle]');
+      scheduleMeterLog();
+    }, 60_000);
+  }
 
-  // If someone previously injected a submissions button, respect role
-  const injected = sidebar.querySelector('button[data-nav="admin-submissions-section"]');
-  if (injected) injected.style.display = isAdmin ? '' : 'none';
-}
+  function logMeter(tag = '') {
+    const { reads, writes, deletes } = APP.meter;
+    if (reads + writes + deletes === 0) return;
+    console.groupCollapsed(`Firestore Meter ${tag}: R=${reads} W=${writes} D=${deletes}`);
+    console.log({ reads, writes, deletes });
+    console.groupEnd();
+  }
 
-
-
-/* =========================
-   PRACTICE (MCQ)
-   ========================= */
-async function loadPracticeManifest() {
-  try {
-    statusLine("practice-status", "Loading practice sets…");
-    const res = await fetch("practice/questions.json");
-    if (!res.ok) throw new Error(`HTTP ${res.status} for practice/questions.json`);
-    const text = await res.text();
-    if (text.trim().startsWith("<")) throw new Error("Got HTML instead of JSON for practice/questions.json");
-
-    const setList = JSON.parse(text); // ["Lecture-01.csv", ...]
-    setList.sort((a,b)=>a.localeCompare(b, undefined, {numeric:true}));
-
-    allSets = {};
-    for (const file of setList) {
-      const name = file.replace(".csv", "");
-      const url = `practice/${file}`;
-      statusLine("practice-status", `Loading ${file}…`);
-      const questions = await fetchAndParseMCQ(url);
-      allSets[name] = questions;
+  /* -------------------------------------------------------
+   * CSV parsing (robust, quote/newline/BOM safe)
+   * ----------------------------------------------------- */
+  function parseCSV(text) {
+    // remove UTF-8 BOM
+    if (text.charCodeAt(0) === 0xFEFF) {
+      text = text.slice(1);
     }
-    renderPracticeButtons();
-    statusLine("practice-status", `Loaded ${Object.keys(allSets).length} set(s).`);
-  } catch (err) {
-    console.error("Practice manifest load failed:", err);
-    statusLine("practice-status", `Failed to load: ${err.message}`);
-  }
-}
+    const rows = [];
+    let row = [];
+    let i = 0, cur = '', inQuotes = false;
 
-// Parse CSV safely (handles "quoted, fields", newlines in quotes, and double-quotes)
-function parseCSV(text){
-  const rows = [];
-  let row = [];
-  let cur = '';
-  let inQuotes = false;
+    const pushCell = () => { row.push(cur); cur = ''; };
+    const endRow = () => { rows.push(row); row = []; };
 
-  for (let i = 0; i < text.length; i++){
-    const ch = text[i];
-    if (inQuotes){
-      if (ch === '"'){
-        // Escaped quote?
-        if (text[i+1] === '"'){ cur += '"'; i++; }
-        else { inQuotes = false; }
-      } else {
-        cur += ch;
-      }
-    } else {
-      if (ch === '"'){
-        inQuotes = true;
-      } else if (ch === ','){
-        row.push(cur.trim());
-        cur = '';
-      } else if (ch === '\n'){
-        row.push(cur.trim());
-        rows.push(row);
-        row = [];
-        cur = '';
-      } else if (ch === '\r'){
-        // ignore (normalize CRLF)
-      } else {
-        cur += ch;
-      }
-    }
-  }
-  // flush last field
-  if (cur.length || inQuotes || row.length) {
-    row.push(cur.trim());
-    rows.push(row);
-  }
-  // filter truly empty lines
-  return rows.filter(r => r.some(c => c && c.length));
-}
+    while (i < text.length) {
+      const ch = text[i];
 
-// Parse CSV safely (quotes, commas inside quotes, newlines, "" escapes)
-function parseCSV(text){
-  const rows = [];
-  let row = [];
-  let cur = '';
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++){
-    const ch = text[i];
-    if (inQuotes){
-      if (ch === '"'){
-        if (text[i+1] === '"'){ cur += '"'; i++; }
-        else { inQuotes = false; }
-      } else cur += ch;
-    } else {
-      if (ch === '"') inQuotes = true;
-      else if (ch === ','){ row.push(cur.trim()); cur = ''; }
-      else if (ch === '\n'){ row.push(cur.trim()); rows.push(row); row = []; cur = ''; }
-      else if (ch === '\r'){ /* ignore */ }
-      else cur += ch;
-    }
-  }
-  if (cur.length || inQuotes || row.length){ row.push(cur.trim()); rows.push(row); }
-  return rows.filter(r => r.some(c => c && c.length));
-}
-
-async function fetchAndParseMCQ(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  const raw = await res.text();
-  const rows = parseCSV(raw.replace(/\uFEFF/g, '')); // strip BOM if any
-
-  // Optional header detection
-  let startIdx = 0;
-  if (rows.length && (rows[0][0]||'').toLowerCase() === 'question') startIdx = 1;
-
-  const out = [];
-  for (let i = startIdx; i < rows.length; i++){
-    const cols = rows[i];
-    // Expected: question, op1, op2, op3, op4, ans
-    const q  = (cols[0] || '').trim();
-    const o1 = (cols[1] || '').trim();
-    const o2 = (cols[2] || '').trim();
-    const o3 = (cols[3] || '').trim();
-    const o4 = (cols[4] || '').trim();
-    const ans = (cols[5] || '').trim();
-    const options = [o1,o2,o3,o4].filter(Boolean);
-    if (!q || options.length < 2) continue;
-
-    // Map 'ans' (full text) to one of the options; fallback to first
-    let correctIndex = 0;
-    if (ans){
-      const ix = options.findIndex(o => o === ans);
-      correctIndex = ix >= 0 ? ix : 0;
-    }
-    out.push({ q, options, correctIndex });
-  }
-  return out;
-}
-
-
-
-function renderPracticeButtons() {
-  const container = $("practice-buttons");
-  if (!container) return;
-  container.innerHTML = "";
-
-  Object.keys(allSets).forEach((name) => {
-    const wrap = document.createElement("div");
-    wrap.style.display = "flex";
-    wrap.style.alignItems = "center";
-    wrap.style.gap = "8px";
-    wrap.style.flexWrap = "wrap";
-
-    const r = getResume(name);
-    const mainBtn = document.createElement("button");
-
-    if (r && r.total){
-      const done = Math.min(r.index, r.total);
-      const pct = percent(done, r.total);
-      mainBtn.textContent = `${name} · Continue ${done}/${r.total} (${pct}%)`;
-      mainBtn.title = "Resume where you left off";
-    } else {
-      mainBtn.textContent = name;
-    }
-
-    mainBtn.onclick = async () => {
-      if (sessionBuf.total > 0 && sessionBuf.deckName && sessionBuf.deckName !== name) {
-        await autoCommitIfNeeded("switch set");
-      }
-      selectSet(name);
-    };
-    wrap.appendChild(mainBtn);
-
-    // ↺ Restart button appears only if there is a resume save
-    if (r && r.total){
-      const restartBtn = document.createElement("button");
-      restartBtn.textContent = "↺ Restart";
-      restartBtn.style.background = "#6b7280";        // subtle neutral
-      restartBtn.style.whiteSpace = "nowrap";
-      restartBtn.onclick = async (e) => {
-        e.stopPropagation();
-        if (sessionBuf.total > 0 && sessionBuf.deckName && sessionBuf.deckName !== name) {
-          await autoCommitIfNeeded("switch set");
+      if (inQuotes) {
+        if (ch === '"') {
+          if (text[i + 1] === '"') {
+            cur += '"';
+            i += 2;
+            continue;
+          } else {
+            inQuotes = false;
+            i++;
+            continue;
+          }
+        } else {
+          cur += ch;
+          i++;
+          continue;
         }
-        restartDeck(name);
-      };
-      wrap.appendChild(restartBtn);
+      } else {
+        if (ch === '"') {
+          inQuotes = true;
+          i++;
+          continue;
+        }
+        if (ch === ',') {
+          pushCell();
+          i++;
+          continue;
+        }
+        if (ch === '\r') { // normalize CRLF/CR to LF handling
+          i++;
+          continue;
+        }
+        if (ch === '\n') {
+          pushCell();
+          endRow();
+          i++;
+          continue;
+        }
+        cur += ch;
+        i++;
+      }
+    }
+    // flush trailing cell/row
+    if (cur.length > 0 || row.length > 0) {
+      pushCell();
+      endRow();
+    }
+    return rows;
+  }
+
+  async function fetchAndParseCSV(url) {
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+    const text = await res.text();
+    const raw = parseCSV(text);
+    // Normalize to { front, back, romaji } ignoring blank lines
+    const list = raw.map(cols => {
+      const word = safeText(cols[0]).trim();
+      const meaning = safeText(cols[1]).trim();
+      const romaji = safeText(cols[2]).trim();
+      return { front: word, back: meaning, romaji };
+    }).filter(r => r.front && r.back);
+    return list;
+  }
+
+  /* -------------------------------------------------------
+   * Router + Section lifecycle
+   * ----------------------------------------------------- */
+  function showSection(id) {
+    if (APP.currentSection === id) return;
+
+    const main = $('main');
+    const sections = main.querySelectorAll(':scope > section');
+    sections.forEach(sec => setHidden(sec, true));
+
+    const el = $(id);
+    if (!el) return;
+    setHidden(el, false);
+    el.focus({ preventScroll: false });
+
+    APP.lastSection = APP.currentSection;
+    APP.currentSection = id;
+
+    // Pause listeners for previous section
+    if (APP.lastSection && APP.sections.has(APP.lastSection)) {
+      const conf = APP.sections.get(APP.lastSection);
+      try { conf.exit?.(); } catch (e) { console.warn(e); }
+      // notify firebase adapter
+      APP.FB.onSectionExit?.(APP.lastSection);
     }
 
-    container.appendChild(wrap);
-  });
-}
-
-
-
-function selectSet(name) {
-  currentSet = allSets[name] || [];
-  currentSetName = name;
-
-  if (currentSet.length === 0) { alert(`Set "${name}" is empty.`); return; }
-
-  // Start at resume index (if any)
-  const r = getResume(name);
-  currentIndex = r ? Math.min(r.index, currentSet.length - 1) : 0;
-
-  score = { correct: 0, wrong: 0, skipped: 0 };
-  sessionBuf = { deckName: name, mode: "mcq", correct: 0, wrong: 0, skipped: 0, total: 0, jpEnCorrect: 0, enJpCorrect: 0 };
-  persistSession();
-
-  showSection("practice");
-  showQuestion();
-  updateScore();
-  updateDeckProgress();
-
-  // Tiny hint line
-  const hint = $("resume-hint");
-  if (hint) {
-    if (r && r.index > 0) hint.textContent = `Resumed at question ${currentIndex + 1} of ${currentSet.length}.`;
-    else hint.textContent = '';
-  }
-}
-
-function showQuestion() {
-  const q = currentSet[currentIndex];
-  if (!q) return nextQuestion();
-
-  setText("question-box", q.q);
-  const optionsList = $("options"); if (!optionsList) return;
-  optionsList.innerHTML = "";
-
-  const correct = q.options[q.correctIndex];
-  q.options.forEach((opt) => {
-    const li = document.createElement("li");
-    li.textContent = opt;
-    li.onclick = () => checkAnswer(opt, correct, q);
-    optionsList.appendChild(li);
-  });
-
-  // Save resume pointer frequently
-  if (currentSetName) setResume(currentSetName, currentIndex, currentSet.length);
-  updateDeckProgress();
-}
-
-function checkAnswer(selected, correct, qObj) {
-  const options = document.querySelectorAll("#options li");
-  options.forEach((li) => {
-    if (li.textContent === correct) li.classList.add("correct");
-    else if (li.textContent === selected) li.classList.add("wrong");
-  });
-
-  const key = qObj.q + "|" + correct;
-
-  if (selected === correct) {
-    score.correct++; sessionBuf.correct++; sessionBuf.total++; sessionBuf.jpEnCorrect++;
-    masteryMap[key] = (masteryMap[key] || 0) + 1;
-    if (masteryMap[key] >= 5) mistakes = mistakes.filter((m) => m.q !== qObj.q);
-  } else {
-    score.wrong++; sessionBuf.wrong++; sessionBuf.total++;
-    masteryMap[key] = 0; mistakes.push(qObj);
+    // Resume/attach listeners for current section
+    if (APP.sections.has(id)) {
+      const conf = APP.sections.get(id);
+      try { conf.enter?.(); } catch (e) { console.warn(e); }
+      APP.FB.onSectionEnter?.(id);
+    }
   }
 
-  localStorage.setItem("mistakes", JSON.stringify(mistakes));
-  localStorage.setItem("masteryMap", JSON.stringify(masteryMap));
-  persistSession();
-  updateScore();
-  setTimeout(() => { nextQuestion(); updateDeckProgress(); }, 500);
-}
-
-function skipQuestion() {
-  const qObj = currentSet[currentIndex]; if (!qObj) return;
-  const key = qObj.q + "|" + (qObj.options[qObj.correctIndex] || "");
-  score.skipped++; sessionBuf.skipped++; sessionBuf.total++; masteryMap[key] = 0; mistakes.push(qObj);
-  localStorage.setItem("mistakes", JSON.stringify(mistakes));
-  localStorage.setItem("masteryMap", JSON.stringify(masteryMap));
-  persistSession(); updateScore(); nextQuestion(); updateDeckProgress();
-}
-window.skipQuestion = skipQuestion;
-
-function nextQuestion() {
-  currentIndex++;
-
-  // Keep resume fresh while advancing
-  if (currentSetName) setResume(currentSetName, Math.min(currentIndex, currentSet.length - 1), currentSet.length);
-
-  if (currentIndex >= currentSet.length) {
-    // Clear resume for this deck when finished
-    clearResume(currentSetName);
-    alert(`Finished! ✅ ${score.correct} ❌ ${score.wrong} ➖ ${score.skipped}\nSaving your progress…`);
-    showSection("practice-select");
-    renderPracticeButtons(); // refresh buttons so "↺ Restart" disappears
-  } else {
-    showQuestion();
+  function registerSection(id, { enter, exit } = {}) {
+    APP.sections.set(id, { enter, exit });
   }
-}
 
-function updateScore() {
-  setText("correct", String(score.correct));
-  setText("wrong", String(score.wrong));
-  setText("skipped", String(score.skipped));
-}
-
-function updateDeckProgress() {
-  const totalQs = currentSet.length || 0;
-  const done = Math.min(currentIndex, totalQs);
-  const p = percent(done, totalQs);
-  const bar = $("deck-progress-bar");
-  const txt = $("deck-progress-text");
-  if (bar) bar.style.width = `${p}%`;
-  if (txt) txt.textContent = `${done} / ${totalQs} (${p}%)`;
-}
-
-async function autoCommitIfNeeded(reason = "") {
-  if (!window.__fb_commitSession || committing) return;
-  if (!sessionBuf || sessionBuf.total <= 0) return;
-  try {
-    committing = true;
-    const payload = {
-      deckName: sessionBuf.deckName || 'Unknown Set',
-      mode: sessionBuf.mode,
-      correct: sessionBuf.correct,
-      wrong: sessionBuf.wrong,
-      skipped: sessionBuf.skipped,
-      total: sessionBuf.total,
-      jpEnCorrect: sessionBuf.jpEnCorrect,
-      enJpCorrect: sessionBuf.enJpCorrect
-    };
-    await window.__fb_commitSession(payload);
-    // reset counters but keep set metadata
-    Object.assign(sessionBuf, { correct:0, wrong:0, skipped:0, total:0, jpEnCorrect:0, enJpCorrect:0 });
-    persistSession();
-    await renderProgress();
-  } catch (e) {
-    console.warn("[autosave] failed; keeping local buffer:", e?.message || e);
-  } finally {
-    committing = false;
-  }
-}
-
-/* =========================
-   MISTAKES
-   ========================= */
-function startMistakePractice() {
-  if (mistakes.length === 0) return alert("No mistakes yet!");
-  currentSet = mistakes.slice();
-  currentSetName = "Mistakes";
-  currentIndex = 0;
-  showSection("practice");
-  score = { correct: 0, wrong: 0, skipped: 0 };
-  sessionBuf = { deckName: "Mistakes", mode: "mcq", correct: 0, wrong: 0, skipped: 0, total: 0, jpEnCorrect: 0, enJpCorrect: 0 };
-  showQuestion();
-  updateDeckProgress();
-}
-window.startMistakePractice = startMistakePractice;
-
-function clearMistakes() {
-  if (confirm("Clear all mistake questions?")) {
-    mistakes = [];
-    localStorage.setItem("mistakes", JSON.stringify([]));
-    alert("Mistakes cleared.");
-  }
-}
-window.clearMistakes = clearMistakes;
-
-/* =========================
-   LECTURES
-   ========================= */
-async function loadLecturesManifest() {
-  try {
-    statusLine("lectures-status", "Loading lectures…");
-    const res = await fetch("lectures/lectures.json");
-    if (!res.ok) throw new Error(`HTTP ${res.status} for lectures/lectures.json`);
-    const t = await res.text();
-    if (t.trim().startsWith("<")) throw new Error("Got HTML instead of JSON for lectures manifest");
-    const list = JSON.parse(t); // string[] of PDF filenames
-
-    const container = $("lectures-list");
-    if (!container) return;
-    container.innerHTML = "";
-    list.forEach((file) => {
-      const btn = document.createElement("button");
-      btn.textContent = file.replace(".pdf", "");
-      btn.onclick = () => window.open(`lectures/${file}`, "_blank");
-      container.appendChild(btn);
+  /* -------------------------------------------------------
+   * Navigation bindings (no inline onclicks)
+   * ----------------------------------------------------- */
+  function bindNav() {
+    // Sidebar nav
+    bySelAll('[data-nav]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        showSection(btn.getAttribute('data-nav'));
+      }, { passive: true });
     });
-    statusLine("lectures-status", `Loaded ${list.length} lecture file(s).`);
-  } catch (err) {
-    console.error("Lectures manifest load failed:", err);
-    statusLine("lectures-status", `Failed to load lectures: ${err.message}`);
-  }
-}
 
-/* =========================
-   PROGRESS (attempts + weekly overview)
-   ========================= */
-async function renderProgress() {
-  try {
-    // attempts table
-    if (window.__fb_fetchAttempts) {
-      const attempts = await window.__fb_fetchAttempts(50);
-      const tbody = $("progress-table")?.querySelector("tbody");
-      if (tbody) {
-        tbody.innerHTML = "";
-        attempts.slice(0, 20).forEach(a => {
-          const tr = document.createElement("tr");
-          const when = a.createdAt ? new Date(a.createdAt).toLocaleString() : "—";
-          tr.innerHTML = `
-            <td>${when}</td>
-            <td>${a.deckName || "—"}</td>
-            <td>${a.mode || "—"}</td>
-            <td>${a.correct ?? 0}</td>
-            <td>${a.wrong ?? 0}</td>
-            <td>${a.skipped ?? 0}</td>
-            <td>${a.total ?? ((a.correct||0)+(a.wrong||0)+(a.skipped||0))}</td>
-          `;
-          tbody.appendChild(tr);
+    // Auth buttons
+    const authBtn = $('auth-btn');
+    if (authBtn) authBtn.addEventListener('click', () => APP.FB.signIn?.());
+
+    const signOutBtn = $('signout-btn');
+    if (signOutBtn) signOutBtn.addEventListener('click', () => APP.FB.signOut?.());
+
+    // Practice actions
+    $('btn-skip')?.addEventListener('click', onSkip, { passive: true });
+
+    // Mistakes actions
+    $('btn-mistakes-start')?.addEventListener('click', startMistakes, { passive: true });
+    $('btn-mistakes-clear')?.addEventListener('click', clearMistakes, { passive: true });
+
+    // Refresh
+    APP.ui.softRefreshBtn = $('soft-refresh-btn');
+    APP.ui.softRefreshBtn?.addEventListener('click', async () => {
+      APP.ui.softRefreshBtn.disabled = true;
+      try {
+        await refreshAll();
+        toast('Refreshed.');
+        logMeter('[manual-refresh]');
+      } catch (e) {
+        console.error(e);
+        toast('Refresh failed', 'error');
+      } finally {
+        APP.ui.softRefreshBtn.disabled = false;
+      }
+    });
+
+    // Attendance tabs
+    $('att-tab-take')?.addEventListener('click', () => switchAttTab('take'));
+    $('att-tab-history')?.addEventListener('click', () => switchAttTab('history'));
+  }
+
+  /* -------------------------------------------------------
+   * Gates: manage visibility (called by firebase.js through UI hooks)
+   * ----------------------------------------------------- */
+  const UI = {
+    onAuth({ user, isAdmin, approved }) {
+      const gate = $('auth-gate');
+      const approvalGate = $('approval-gate');
+      const app = $('app-root');
+
+      if (!user) {
+        setHidden(gate, false);
+        setHidden(approvalGate, true);
+        setHidden(app, true);
+        return;
+      }
+
+      if (!approved && !isAdmin) {
+        setHidden(gate, true);
+        setHidden(approvalGate, false);
+        setHidden(app, true);
+        return;
+      }
+
+      setHidden(gate, true);
+      setHidden(approvalGate, true);
+      setHidden(app, false);
+
+      // Admin-only visibility handled by firebase.js, but default-hide here
+      bySelAll('.admin-only').forEach(el => setHidden(el, !isAdmin));
+      // Show default section
+      if (!APP.currentSection) showSection('practice-select');
+    },
+    onRoleChange({ isAdmin }) {
+      bySelAll('.admin-only').forEach(el => setHidden(el, !isAdmin));
+    },
+    onApprovalChange({ approved }) {
+      if (approved) {
+        setHidden($('approval-gate'), true);
+        setHidden($('app-root'), false);
+        if (!APP.currentSection) showSection('practice-select');
+      } else {
+        setHidden($('approval-gate'), false);
+        setHidden($('app-root'), true);
+      }
+    }
+  };
+
+  // Expose so firebase.js can drive the gates
+  window.__UI = UI;
+
+  /* -------------------------------------------------------
+   * Practice
+   * ----------------------------------------------------- */
+  async function ensureQuestionsManifest() {
+    if (APP.cache.questionsManifest) return APP.cache.questionsManifest;
+    const res = await fetch('questions.json', { cache: 'no-store' });
+    if (!res.ok) throw new Error('Failed to load questions.json');
+    const data = await res.json();
+    APP.cache.questionsManifest = data;
+    return data;
+  }
+
+  function getDeckFilePath(entry) {
+    // entry can be a string or object with path
+    if (!entry) return null;
+    if (typeof entry === 'string') return entry;
+    if (entry.path) return entry.path;
+    if (entry.file) return entry.file;
+    return null;
+  }
+
+  async function renderPracticeSelect() {
+    const box = $('practice-buttons');
+    if (!box) return;
+    box.innerHTML = '';
+
+    const manifest = await ensureQuestionsManifest();
+    const frag = document.createDocumentFragment();
+
+    (manifest.decks || manifest || []).forEach((entry) => {
+      const name = entry.name || entry.title || getDeckFilePath(entry) || 'Deck';
+      const btn = document.createElement('button');
+      btn.textContent = name;
+      btn.setAttribute('type', 'button');
+      btn.addEventListener('click', () => startPractice(name, entry), { passive: true });
+      frag.appendChild(btn);
+    });
+
+    box.appendChild(frag);
+    $('practice-status').textContent = `Loaded ${ (manifest.decks || manifest || []).length } decks`;
+  }
+
+  async function ensureDeckLoaded(name, entry) {
+    if (APP.cache.decks.has(name)) return APP.cache.decks.get(name);
+    const path = getDeckFilePath(entry);
+    if (!path) throw new Error(`No file for deck ${name}`);
+    const qs = await fetchAndParseCSV(path);
+    APP.cache.decks.set(name, qs);
+    return qs;
+  }
+
+  function updateScoreUI() {
+    const { correct, wrong, skipped } = APP.run;
+    $('correct').textContent = correct;
+    $('wrong').textContent = wrong;
+    $('skipped').textContent = skipped;
+  }
+
+  function updateProgressUI() {
+    const total = APP.run.questions.length || 0;
+    const done = Math.min(APP.run.index, total);
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    if (APP.ui.progressBar) APP.ui.progressBar.style.width = `${pct}%`;
+    if (APP.ui.progressText) APP.ui.progressText.textContent = `${done} / ${total} (${pct}%)`;
+  }
+
+  function pickOptions(correctItem, pool, n = 4) {
+    const opts = [correctItem.back];
+    const seen = new Set([correctItem.back]);
+    // simple distractor sampling
+    for (let i = 0; i < pool.length && opts.length < n; i++) {
+      const idx = Math.floor(Math.random() * pool.length);
+      const cand = pool[idx]?.back;
+      if (cand && !seen.has(cand)) {
+        opts.push(cand);
+        seen.add(cand);
+      }
+    }
+    // shuffle
+    for (let i = opts.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [opts[i], opts[j]] = [opts[j], opts[i]];
+    }
+    return opts;
+  }
+
+  function renderQuestion() {
+    const qBox = $('question-box');
+    const optList = $('options');
+    if (!qBox || !optList) return;
+
+    const idx = APP.run.index;
+    const item = APP.run.questions[idx];
+    if (!item) {
+      // End
+      finishPractice();
+      return;
+    }
+
+    qBox.innerHTML = '';
+    const word = document.createElement('div');
+    word.style.fontSize = '1.4rem';
+    word.style.fontWeight = '700';
+    word.textContent = item.front;
+
+    const meaning = document.createElement('div');
+    meaning.className = 'muted';
+    meaning.style.marginTop = '6px';
+    meaning.textContent = item.romaji ? `${item.back} (${item.romaji})` : item.back;
+
+    qBox.appendChild(word);
+    qBox.appendChild(meaning);
+
+    // Options
+    optList.innerHTML = '';
+    const options = pickOptions(item, APP.run.questions, APP.run.optionsPerQ);
+    const frag = document.createDocumentFragment();
+    options.forEach((txt) => {
+      const li = document.createElement('li');
+      const btn = document.createElement('button');
+      btn.textContent = txt;
+      btn.addEventListener('click', () => onAnswer(txt === item.back), { passive: true });
+      li.appendChild(btn);
+      frag.appendChild(li);
+    });
+    optList.appendChild(frag);
+
+    updateProgressUI();
+  }
+
+  function onAnswer(correct) {
+    if (correct) {
+      APP.run.correct++;
+      toast('✅ Correct', 'success', 1200);
+    } else {
+      APP.run.wrong++;
+      toast('❌ Wrong', 'warn', 1500);
+      pushMistake(APP.run.questions[APP.run.index]);
+    }
+    updateScoreUI();
+    APP.run.index++;
+    renderQuestion();
+  }
+
+  function onSkip() {
+    APP.run.skipped++;
+    updateScoreUI();
+    APP.run.index++;
+    renderQuestion();
+  }
+
+  async function finishPractice() {
+    // Commit session to Firestore via adapter (debounced in firebase.js)
+    try {
+      const total = APP.run.correct + APP.run.wrong + APP.run.skipped;
+      if (total > 0) {
+        await APP.FB.commitSession({
+          deckName: APP.run.deckName,
+          mode: 'practice',
+          correct: APP.run.correct,
+          wrong: APP.run.wrong,
+          skipped: APP.run.skipped,
+          total
         });
       }
-
-      const last = attempts[0];
-      let prev = null;
-      if (last) {
-        prev = attempts.find(a => a.deckName === last.deckName && a.createdAt < last.createdAt) || null;
-      }
-      const lastBox = $("progress-last");
-      const prevBox = $("progress-prev");
-      const deltaBox = $("progress-delta");
-
-      if (lastBox) {
-        if (last) {
-          lastBox.innerHTML = `
-            <div><b>${last.deckName}</b> (${last.mode})</div>
-            <div>✅ ${last.correct || 0} | ❌ ${last.wrong || 0} | ➖ ${last.skipped || 0}</div>
-            <div class="muted">${new Date(last.createdAt).toLocaleString()}</div>
-          `;
-        } else lastBox.textContent = "No attempts yet.";
-      }
-      if (prevBox) {
-        if (prev) {
-          prevBox.innerHTML = `
-            <div><b>${prev.deckName}</b> (${prev.mode})</div>
-            <div>✅ ${prev.correct || 0} | ❌ ${prev.wrong || 0} | ➖ ${prev.skipped || 0}</div>
-            <div class="muted">${new Date(prev.createdAt).toLocaleString()}</div>
-          `;
-        } else prevBox.textContent = "—";
-      }
-      if (deltaBox) {
-        if (last && prev) {
-          const d = (last.correct || 0) - (prev.correct || 0);
-          const cls = d >= 0 ? "delta-up" : "delta-down";
-          const sign = d > 0 ? "+" : (d < 0 ? "" : "±");
-          deltaBox.innerHTML = `<span class="${cls}">${sign}${d} correct vs previous (same set)</span>`;
-        } else if (last && !prev) deltaBox.textContent = "No previous attempt for this set.";
-        else deltaBox.textContent = "—";
-      }
+    } catch (e) {
+      console.warn('[practice commit] skipped:', e?.message || e);
     }
 
-    // weekly overview (tasks + attendance + exam)
-    const obody = $("overview-body");
-    if (obody && window.__fb_fetchWeeklyOverview) {
-      obody.innerHTML = `<tr><td colspan="3">Loading weekly overview…</td></tr>`;
-      const w = await window.__fb_fetchWeeklyOverview();
-      obody.innerHTML = "";
-      // tasks
-      (w.tasks || []).forEach(t => {
-        const scoreTxt = (t.score ?? null) !== null && (t.scoreMax ?? null) !== null
-          ? `${t.score}/${t.scoreMax}` : (t.status || '—');
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td>Task</td><td>${t.title || '(Untitled)'}</td><td>${scoreTxt}</td>`;
-        obody.appendChild(tr);
-      });
-      // attendance
-      (w.attendance || []).forEach(a => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td>Attendance</td><td>${a.date} (Class ${a.classNo ?? '—'})</td><td>${a.status}</td>`;
-        obody.appendChild(tr);
-      });
-      // exam
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td>Exam</td><td>This Week</td><td>${w.exam ?? 0}</td>`;
-      obody.appendChild(tr);
+    toast('Finished practice!');
+    showSection('practice-select');
+  }
+
+  async function startPractice(name, entry) {
+    APP.run.mode = 'practice';
+    APP.run.deckName = name;
+    APP.run.questions = await ensureDeckLoaded(name, entry);
+    // Simple shuffle for practice order
+    APP.run.questions = APP.run.questions.slice().sort(() => Math.random() - 0.5);
+    APP.run.index = 0;
+    APP.run.correct = 0;
+    APP.run.wrong = 0;
+    APP.run.skipped = 0;
+    updateScoreUI();
+    showSection('practice');
+    renderQuestion();
+  }
+
+  /* -------------------------------------------------------
+   * Mistakes (localStorage, capped at 200)
+   * ----------------------------------------------------- */
+  function getMistakes() {
+    try {
+      const raw = localStorage.getItem('mistakes');
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch {
+      return [];
     }
-  } catch (e) {
-    console.warn("renderProgress failed:", e);
   }
-}
 
-/* =========================
-   PROGRESS (combined 4‑column table)
-   ========================= */
-function applyRoleVisibilityForProgress(){
-  const isAdmin = !!window.__isAdmin;
-  $('progress-admin')?.classList.toggle('hidden', !isAdmin);
-  $('progress-student')?.classList.toggle('hidden', isAdmin);
-}
-
-async function listApprovedIntoSelect(selectEl){
-  if (!selectEl) return;
-  selectEl.innerHTML = '<option value="">Loading students…</option>';
-  try{
-    const rows = await (window.__fb_listApprovedStudents ? window.__fb_listApprovedStudents() : []);
-    selectEl.innerHTML = '<option value="">— Select —</option>';
-    rows.forEach(u => {
-      const opt = document.createElement('option');
-      opt.value = u.uid;
-      opt.textContent = u.displayName || u.uid;
-      selectEl.appendChild(opt);
-    });
-  }catch(e){
-    selectEl.innerHTML = '<option value="">Failed to load</option>';
+  function setMistakes(arr) {
+    try {
+      localStorage.setItem('mistakes', JSON.stringify(arr.slice(0, 200)));
+    } catch {}
   }
-}
 
-function fmtPracticeCell(attempt){ // {deckName, correct}
-  if (!attempt) return '';
-  const title = attempt.deckName || 'Lecture';
-  const score = attempt.correct ?? 0;
-  return `${title} (${score})`;
-}
-function fmtTaskCell(row){ // {title,status,score,scoreMax}
-  if (!row) return '';
-  const completed = row.status === 'Submitted' || (row.score ?? null) !== null;
-  const label = (row.score ?? null) !== null && (row.scoreMax ?? null) !== null
-    ? `${row.title} (${row.score}/${row.scoreMax})`
-    : `${row.title} (${completed ? 'Completed' : 'Pending'})`;
-  const cls = completed ? 'status-good' : 'status-bad';
-  return `<span class="${cls}">${label}</span>`;
-}
-function fmtAttendanceCell(row){ // {date,classNo,status}
-  if (!row) return '';
-  const cls = row.status === 'Present' ? 'status-good' : 'status-bad';
-  const classTxt = (row.classNo ?? '—');
-  return `<span class="${cls}">Class No - ${classTxt} (${row.status.toLowerCase()})</span>`;
-}
-function fmtExamCell(score, idx){
-  if (idx > 0) return ''; // only show in the first row
-  return score ? `Exam (${score})` : '';
-}
-
-async function fetchCombinedFor(uid){
-  // Attempts → recent list; we’ll show latest few as "Practice"
-  const attempts = await (window.__fb_fetchAttemptsFor ? window.__fb_fetchAttemptsFor(uid, 10) : []);
-  const practiceRows = attempts.map(a => ({ deckName: a.deckName || 'Lecture', correct: a.correct ?? 0 }));
-
-  // Weekly overview (tasks, attendance, exam)
-  const w = await (window.__fb_fetchWeeklyOverviewFor ? window.__fb_fetchWeeklyOverviewFor(uid) : {tasks:[], attendance:[], exam:0});
-  const taskRows = (w.tasks || []).map(t => ({ title: t.title || 'Task', status: t.status || 'Pending', score: t.score ?? null, scoreMax: t.scoreMax ?? null }));
-  const attRows  = (w.attendance || []).map(a => ({ date: a.date, classNo: a.classNo ?? '—', status: a.status || 'Absent' }));
-  const examScore = w.exam || 0;
-
-  // Build merged table by index
-  const maxLen = Math.max(practiceRows.length, taskRows.length, attRows.length, 1);
-  const rows = [];
-  for (let i=0; i<maxLen; i++){
-    rows.push({
-      practice: practiceRows[i] || null,
-      task: taskRows[i] || null,
-      att: attRows[i] || null,
-      examIdx: i
-    });
+  function pushMistake(item) {
+    const arr = getMistakes();
+    arr.unshift({ front: item.front, back: item.back, romaji: item.romaji || '' });
+    // dedupe by front/back
+    const seen = new Set();
+    const deduped = [];
+    for (const it of arr) {
+      const key = `${it.front}__${it.back}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        deduped.push(it);
+      }
+      if (deduped.length >= 200) break;
+    }
+    setMistakes(deduped);
   }
-  return { rows, examScore };
-}
 
-async function renderCombinedTable(tbodyEl, uid){
-  if (!tbodyEl || !uid) return;
-  tbodyEl.innerHTML = `<tr><td colspan="4">Loading…</td></tr>`;
-  try{
-    const { rows, examScore } = await fetchCombinedFor(uid);
-    tbodyEl.innerHTML = '';
-    if (!rows.length){
-      tbodyEl.innerHTML = `<tr><td colspan="4">No data yet.</td></tr>`;
+  function startMistakes() {
+    const items = getMistakes();
+    if (!items.length) {
+      toast('No mistakes saved yet.', 'warn');
       return;
     }
-    rows.forEach((r) => {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td>${fmtPracticeCell(r.practice)}</td>
-        <td>${fmtTaskCell(r.task)}</td>
-        <td>${fmtAttendanceCell(r.att)}</td>
-        <td>${fmtExamCell(examScore, r.examIdx)}</td>
+    APP.run.mode = 'mistakes';
+    APP.run.deckName = 'Mistakes';
+    APP.run.questions = items.slice().sort(() => Math.random() - 0.5);
+    APP.run.index = 0;
+    APP.run.correct = 0;
+    APP.run.wrong = 0;
+    APP.run.skipped = 0;
+    updateScoreUI();
+    showSection('practice');
+    renderQuestion();
+  }
+
+  function clearMistakes() {
+    setMistakes([]);
+    toast('Mistakes cleared.');
+  }
+
+  /* -------------------------------------------------------
+   * Lectures
+   * ----------------------------------------------------- */
+  async function ensureLectures() {
+    if (APP.cache.lecturesList) return APP.cache.lecturesList;
+    const res = await fetch('lectures.json', { cache: 'no-store' });
+    if (!res.ok) throw new Error('Failed to load lectures.json');
+    const data = await res.json();
+    APP.cache.lecturesList = data;
+    return data;
+  }
+
+  async function renderLectures() {
+    const list = $('lectures-list');
+    const status = $('lectures-status');
+    if (!list || !status) return;
+
+    list.innerHTML = '';
+    const data = await ensureLectures();
+    const items = data.lectures || data || [];
+    if (!items.length) {
+      status.textContent = 'No lectures available.';
+      return;
+    }
+    status.textContent = `Loaded ${items.length} lectures`;
+
+    const frag = document.createDocumentFragment();
+    items.forEach((it) => {
+      const a = document.createElement('a');
+      a.href = it.url || it.link || '#';
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.innerHTML = `<b>${safeText(it.title || 'Lecture')}</b><br><span class="muted">${safeText(it.desc || '')}</span>`;
+      frag.appendChild(a);
+    });
+    list.appendChild(frag);
+  }
+
+  /* -------------------------------------------------------
+   * Tasks (Student/Admin)
+   * ----------------------------------------------------- */
+  async function renderTasksStudent() {
+    const host = $('task-student-list');
+    const container = $('tasks-student');
+    if (!host || !container) return;
+
+    const items = await APP.FB.fetchWeekTasksStudent();
+    setHidden(container, false);
+    host.innerHTML = '';
+
+    if (!items.length) {
+      host.textContent = 'No tasks assigned this week.';
+      return;
+    }
+
+    const frag = document.createDocumentFragment();
+    items.forEach((t) => {
+      const li = document.createElement('div');
+      li.className = 'task-row';
+      const left = document.createElement('div');
+      const right = document.createElement('div');
+
+      left.innerHTML = `
+        <div><b>${safeText(t.title)}</b></div>
+        <div class="muted">${t.desc ? safeText(t.desc) : ''}</div>
+        ${t.link ? `<div><a href="${t.link}" target="_blank" rel="noopener">Reference</a></div>` : ''}
+        ${t.due ? `<div class="muted">Due: ${humanDate(t.due)}</div>` : ''}
       `;
-      tbodyEl.appendChild(tr);
+
+      const chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.checked = !!t.done;
+      chk.addEventListener('change', async () => {
+        try {
+          await APP.FB.toggleTaskCompletion(t.id, chk.checked);
+          toast(chk.checked ? 'Task marked done' : 'Task unchecked');
+        } catch (e) {
+          chk.checked = !chk.checked;
+          toast('Failed to update task', 'error');
+        }
+      });
+      right.appendChild(chk);
+
+      li.appendChild(left);
+      li.appendChild(right);
+      frag.appendChild(li);
     });
-  }catch(e){
-    tbodyEl.innerHTML = `<tr><td colspan="4">Failed to load.</td></tr>`;
+    host.appendChild(frag);
   }
-}
 
-function wireProgressCombined(){
-  applyRoleVisibilityForProgress();
+  function validateAdminTaskInput() {
+    const title = $('task-title').value.trim();
+    const link = $('task-link').value.trim();
+    const due = $('task-due').value;
+    const max = parseInt($('task-max').value, 10);
+    const desc = $('task-desc').value.trim();
 
-  // ADMIN
-  const sel = $('progress-student-select');
-  const loadBtn = $('progress-load');
-  const statusEl = $('progress-admin-status');
-  const nameEl = $('progress-student-name');
-  const tbodyAdmin = $('progress-admin-tbody');
+    const errors = [];
+    if (!title) errors.push('Title is required.');
+    if (Number.isNaN(max) || max < 0) errors.push('Score must be a non-negative number.');
 
-  if (window.__isAdmin) {
-    listApprovedIntoSelect(sel);
-    if (loadBtn && !loadBtn.dataset.bound) {
+    return { ok: errors.length === 0, errors, payload: { title, link, due: due || null, max: max || 0, desc } };
+  }
+
+  async function renderTasksAdmin() {
+    const wrap = $('tasks-admin');
+    const list = $('task-admin-list');
+    const btnCreate = $('task-create');
+    if (!wrap || !list || !btnCreate) return;
+
+    // Bind once
+    if (!btnCreate.__bound) {
+      btnCreate.addEventListener('click', async () => {
+        const { ok, errors, payload } = validateAdminTaskInput();
+        if (!ok) { toast(errors.join(' '), 'warn'); return; }
+        btnCreate.disabled = true;
+        try {
+          await APP.FB.createTask(payload);
+          $('task-title').value = '';
+          $('task-link').value = '';
+          $('task-due').value = '';
+          $('task-max').value = '';
+          $('task-desc').value = '';
+          await renderTasksAdmin(); // refresh list
+          toast('Task created.');
+        } catch (e) {
+          console.error(e);
+          toast('Failed to create task', 'error');
+        } finally {
+          btnCreate.disabled = false;
+        }
+      });
+      btnCreate.__bound = true;
+    }
+
+    const items = await APP.FB.fetchWeekTasksAdmin();
+    list.innerHTML = '';
+    if (!items.length) {
+      list.textContent = 'No tasks created this week.';
+      return;
+    }
+
+    const frag = document.createDocumentFragment();
+    items.forEach(t => {
+      const row = document.createElement('div');
+      row.className = 'task-row';
+      const left = document.createElement('div');
+      left.innerHTML = `<div><b>${safeText(t.title)}</b> <span class="muted">(${t.max ?? 0} pts)</span></div>
+                        ${t.desc ? `<div class="muted">${safeText(t.desc)}</div>` : ''}
+                        ${t.link ? `<div><a href="${t.link}" target="_blank" rel="noopener">Reference</a></div>` : ''}
+                        ${t.due ? `<div class="muted">Due: ${humanDate(t.due)}</div>` : ''}`;
+      const right = document.createElement('div');
+      const del = document.createElement('button');
+      del.textContent = 'Delete';
+      del.className = 'danger';
+      del.addEventListener('click', async () => {
+        if (!confirm('Delete this task?')) return;
+        del.disabled = true;
+        try {
+          await APP.FB.deleteTask(t.id);
+          row.remove();
+          toast('Task deleted.');
+        } catch (e) {
+          console.error(e);
+          toast('Failed to delete task', 'error');
+        } finally {
+          del.disabled = false;
+        }
+      });
+      right.appendChild(del);
+
+      row.appendChild(left);
+      row.appendChild(right);
+      frag.appendChild(row);
+    });
+    list.appendChild(frag);
+  }
+
+  /* -------------------------------------------------------
+   * Progress
+   * ----------------------------------------------------- */
+  async function renderProgressStudent() {
+    const tbody = $('progress-stu-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    const agg = await APP.FB.fetchStudentProgress();
+    const rows = [
+      ['Practice', agg.practice ?? 0],
+      ['Tasks', agg.tasks ?? 0],
+      ['Attendance', agg.attendance ?? 0],
+      ['Exam', agg.exam ?? 0],
+    ];
+
+    const frag = document.createDocumentFragment();
+    rows.forEach(([label, val]) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td data-th="Metric">${label}</td><td data-th="Score">${val}</td><td data-th="—"></td><td data-th="—"></td>`;
+      frag.appendChild(tr);
+    });
+    tbody.appendChild(frag);
+  }
+
+  async function renderProgressAdmin() {
+    const sel = $('progress-student-select');
+    const loadBtn = $('progress-load');
+    const nameSpan = $('progress-student-name');
+    const tbody = $('progress-admin-tbody');
+    const status = $('progress-admin-status');
+    if (!sel || !loadBtn || !tbody) return;
+
+    status.textContent = 'Loading students...';
+    const students = await APP.FB.fetchAllApprovedStudents();
+    sel.innerHTML = '';
+    const frag = document.createDocumentFragment();
+    students.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.uid;
+      opt.textContent = s.displayName || s.uid;
+      frag.appendChild(opt);
+    });
+    sel.appendChild(frag);
+    status.textContent = `${students.length} students`;
+
+    if (!loadBtn.__bound) {
       loadBtn.addEventListener('click', async () => {
-        const uid = sel?.value || '';
-        if (!uid){ statusEl && (statusEl.textContent = 'Pick a student.'); return; }
-        statusEl && (statusEl.textContent = 'Loading…');
-        try {
-          // set name label from option text
-          if (nameEl && sel) nameEl.textContent = sel.options[sel.selectedIndex]?.textContent || uid;
-          await renderCombinedTable(tbodyAdmin, uid);
-          statusEl && (statusEl.textContent = '');
-        } catch {
-          statusEl && (statusEl.textContent = 'Failed to load.');
-        }
+        const uid = sel.value;
+        if (!uid) return;
+        nameSpan.textContent = sel.options[sel.selectedIndex]?.textContent || uid;
+        tbody.innerHTML = '';
+        const agg = await APP.FB.fetchAdminStudentProgress(uid);
+        const rows = [
+          ['Practice', agg.practice ?? 0],
+          ['Tasks', agg.tasks ?? 0],
+          ['Attendance', agg.attendance ?? 0],
+          ['Exam', agg.exam ?? 0],
+        ];
+        const f = document.createDocumentFragment();
+        rows.forEach(([label, val]) => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td data-th="Metric">${label}</td><td data-th="Score">${val}</td><td data-th="—"></td><td data-th="—"></td>`;
+          f.appendChild(tr);
+        });
+        tbody.appendChild(f);
       });
-      loadBtn.dataset.bound = '1';
+      loadBtn.__bound = true;
     }
   }
 
-  // STUDENT
-  const tbodyStu = $('progress-stu-tbody');
-  if (!window.__isAdmin) {
-    const uid = (window.__getCurrentUid && window.__getCurrentUid()) || null;
-    if (uid) renderCombinedTable(tbodyStu, uid);
-  }
-}
-
-// Refresh when section is shown
-window.__progress_refreshOnShow = () => {
-  applyRoleVisibilityForProgress();
-  if (window.__isAdmin) {
-    // do nothing until admin picks a student
-  } else {
-    const uid = (window.__getCurrentUid && window.__getCurrentUid()) || null;
-    if (uid) renderCombinedTable($('progress-stu-tbody'), uid);
-  }
-};
-
-window.renderProgress = renderProgress;
-
-/* =========================
-   ADMIN: Approvals
-   ========================= */
-function wireApprovals() {
-  const listEl = $("approvals-list");
-  const container = $("admin-approvals-section");
-  if (!listEl || !container) return;
-
-  async function refreshApprovals() {
-    if (!window.__isAdmin) { listEl.innerHTML = '<div class="muted">Admin only.</div>'; return; }
-    try {
-      listEl.innerHTML = '<div class="muted">Loading pending students…</div>';
-      const rows = await (window.__fb_listPending ? window.__fb_listPending() : []);
-      if (!rows.length) { listEl.innerHTML = '<div class="muted">No pending approvals.</div>'; return; }
-
-      listEl.innerHTML = '';
-      rows.forEach(u => {
-        const row = document.createElement('div');
-        row.className = 'task-item';
-        row.style.display = 'flex';
-        row.style.alignItems = 'center';
-        row.style.gap = '8px';
-        const name = document.createElement('span');
-        name.textContent = u.displayName || '(Unnamed)';
-        const uid = document.createElement('code');
-        uid.textContent = u.uid;
-        uid.style.opacity = 0.8;
-        uid.style.fontSize = '12px';
-        const btn = document.createElement('button');
-        btn.textContent = 'Approve';
-        btn.onclick = async () => {
-          btn.disabled = true;
-          try { await window.__fb_approveUser(u.uid); refreshApprovals(); }
-          catch(e){ alert('Failed: ' + (e?.message || e)); btn.disabled = false; }
-        };
-        row.append(name, uid, btn);
-        listEl.appendChild(row);
-      });
-    } catch (e) {
-      console.error(e);
-      const msg = (e && e.message) ? e.message : 'Failed to load.';
-      listEl.innerHTML = `<div class="muted">${msg}</div>`;
+  /* -------------------------------------------------------
+   * Leaderboards
+   * ----------------------------------------------------- */
+  async function renderCourseLeaderboard() {
+    const list = $('course-leaderboard-list');
+    if (!list) return;
+    list.innerHTML = '';
+    const rows = await APP.FB.fetchCourseLeaderboard(); // on-demand (no idle reads)
+    if (!rows.length) {
+      list.innerHTML = '<li>No data yet.</li>';
+      return;
     }
-  }
-
-  // auto-refresh whenever section is shown
-  const observer = new MutationObserver(() => {
-    if (!container.classList.contains('hidden')) refreshApprovals();
-  });
-  observer.observe(container, { attributes: true, attributeFilter: ['class'] });
-
-  // initial (if section already visible)
-  if (!container.classList.contains('hidden')) refreshApprovals();
-}
-
-/* =========================
-   TASKS (Admin + Student)
-   ========================= */
-function wireTasks() {
-  // Admin controls
-  const adminWrap   = $("tasks-admin");
-  const titleIn     = $("task-title");
-  const linkIn      = $("task-link");
-  const dueIn       = $("task-due");
-  const maxIn       = $("task-max");
-  const descIn      = $("task-desc");
-  const createBtn   = $("task-create");
-  const adminList   = $("task-admin-list");
-
-  // Exam set
-  const examUidIn   = $("exam-uid");
-  const examScoreIn = $("exam-score");
-  const examSaveBtn = $("exam-save");
-
-  // Student view
-  const studentWrap = $("tasks-student");
-  const studentList = $("task-student-list");
-
-  function toggleByRole() {
-    if (adminWrap) adminWrap.classList.toggle('hidden', !window.__isAdmin);
-    if (studentWrap) studentWrap.classList.toggle('hidden', !!window.__isAdmin);
-  }
-
-  async function listTasksForAdmin() {
-    if (!adminList) return;
-    adminList.innerHTML = '<div class="muted">Loading…</div>';
-    try {
-      const wk = window.__getISOWeek ? window.__getISOWeek() : null;
-      const tasks = await (window.__fb_listTasks ? window.__fb_listTasks(wk || (void 0)) : []);
-      adminList.innerHTML = '';
-      if (!tasks.length) {
-        adminList.innerHTML = '<div class="muted">No tasks this week.</div>';
-        return;
-      }
-      tasks.forEach(t => {
-        const row = document.createElement('div');
-        row.className = 'task-item card';
-        row.innerHTML = `
-          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-            <b>${t.title || '(Untitled)'}</b>
-            <span class="muted">· Due: ${t.dueAt ? new Date(t.dueAt).toLocaleString() : 'No due'}</span>
-            ${t.link ? `<a href="${t.link}" target="_blank" rel="noopener">Open link</a>` : ''}
-          </div>
-          <div class="muted" style="margin-top:6px;">${t.description || ''}</div>
-          <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
-            <input data-edit="title"   placeholder="Edit title" value="${t.title || ''}">
-            <input data-edit="link"    placeholder="Edit link" value="${t.link || ''}">
-            <input data-edit="due"     type="datetime-local" value="">
-            <input data-edit="max"     type="number" min="0" step="1" placeholder="Score max" value="${t.scoreMax ?? ''}">
-          </div>
-          <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
-            <textarea data-edit="desc" placeholder="Edit description">${t.description || ''}</textarea>
-          </div>
-          <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
-            <button data-action="save">Save</button>
-            <button data-action="view">View Submissions</button>
-            <button data-action="delete" style="background:#dc2626">Delete</button>
-          </div>
-        `;
-        // fill datetime-local if t.dueAt is an ISO/timestamp
-        try {
-          if (t.dueAt) {
-            const dt = new Date(t.dueAt);
-            const iso = new Date(dt.getTime() - dt.getTimezoneOffset()*60000).toISOString().slice(0,16);
-            row.querySelector('input[data-edit="due"]').value = iso;
-          }
-        } catch {}
-
-        row.querySelector('[data-action="save"]').onclick = async () => {
-          const patch = {
-            title: row.querySelector('input[data-edit="title"]').value.trim(),
-            link: row.querySelector('input[data-edit="link"]').value.trim(),
-            description: row.querySelector('textarea[data-edit="desc"]').value.trim()
-          };
-          const dueVal = row.querySelector('input[data-edit="due"]').value;
-          if (dueVal) patch.dueAt = new Date(dueVal).toISOString();
-          const maxVal = row.querySelector('input[data-edit="max"]').value;
-          if (maxVal !== '') patch.scoreMax = Number(maxVal);
-          try {
-            await window.__fb_updateTask(window.__getISOWeek ? window.__getISOWeek() : undefined, t.id, patch);
-            await listTasksForAdmin();
-          } catch (e) {
-            alert('Save failed: ' + (e?.message || e));
-          }
-        };
-
-        row.querySelector('[data-action="view"]').onclick = () => {
-          // jump to the Admin Submissions section and preselect this task
-          showSection("admin-submissions-section");
-          if (typeof window.__subs_selectTaskId === 'function') window.__subs_selectTaskId(t.id);
-        };
-
-        row.querySelector('[data-action="delete"]').onclick = async () => {
-          if (!confirm('Delete this task (and its submissions)?')) return;
-          try {
-            if (typeof window.__fb_deleteTask === 'function') {
-              await window.__fb_deleteTask(window.__getISOWeek ? window.__getISOWeek() : undefined, t.id);
-              await listTasksForAdmin();
-            } else {
-              alert('Missing __fb_deleteTask in firebase.js — update firebase.js to enable deletion.');
-            }
-          } catch (e) {
-            alert('Delete failed: ' + (e?.message || e));
-          }
-        };
-
-        adminList.appendChild(row);
-      });
-    } catch (e) {
-      adminList.innerHTML = '<div class="muted">Failed to load tasks.</div>';
-      console.error(e);
-    }
-  }
-
-  async function listTasksForStudent() {
-    if (!studentList) return;
-    studentList.innerHTML = '<div class="muted">Loading…</div>';
-    try {
-      const wk = window.__getISOWeek ? window.__getISOWeek() : null;
-      const tasks = await (window.__fb_listTasks ? window.__fb_listTasks(wk || (void 0)) : []);
-      const mySubs = await (window.__fb_listMySubmissions ? window.__fb_listMySubmissions(wk || (void 0)) : {});
-      studentList.innerHTML = '';
-      if (!tasks.length) {
-        studentList.innerHTML = '<div class="muted">No tasks assigned this week.</div>';
-        return;
-      }
-      tasks.forEach(t => {
-        const sub = mySubs[t.id] || {};
-        const wrap = document.createElement('div');
-        wrap.className = 'task-item card';
-        wrap.innerHTML = `
-          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-            <b>${t.title || '(Untitled)'}</b>
-            <span class="muted">· Due: ${t.dueAt ? new Date(t.dueAt).toLocaleString() : 'No due'}</span>
-            ${t.link ? `<a href="${t.link}" target="_blank" rel="noopener">Open link</a>` : ''}
-          </div>
-          <div class="muted" style="margin-top:6px;">${t.description || ''}</div>
-          <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
-            <input data-sub="link" placeholder="Your submission link/file URL" value="${sub.link || ''}">
-            <button data-action="submit">Submit</button>
-            <span class="muted">${sub.submittedAt ? 'Submitted' : 'Pending'}${(sub.score ?? null) !== null ? ` · Score: ${sub.score}/${t.scoreMax ?? '—'}` : ''}</span>
-          </div>
-        `;
-        wrap.querySelector('[data-action="submit"]').onclick = async () => {
-          const linkUrl = wrap.querySelector('input[data-sub="link"]').value.trim();
-          if (!linkUrl) { alert('Please paste your submission link (e.g., Google Drive URL).'); return; }
-          try {
-            await window.__fb_submitTask(window.__getISOWeek ? window.__getISOWeek() : undefined, t.id, linkUrl);
-            await listTasksForStudent();
-          } catch (e) {
-            alert('Submit failed: ' + (e?.message || e));
-          }
-        };
-        studentList.appendChild(wrap);
-      });
-    } catch (e) {
-      studentList.innerHTML = '<div class="muted">Failed to load tasks.</div>';
-      console.error(e);
-    }
-  }
-
-  async function createTask() {
-    const data = {
-      title: (titleIn?.value || "").trim(),
-      description: (descIn?.value || "").trim(),
-      link: (linkIn?.value || "").trim(),
-      scoreMax: maxIn?.value ? Number(maxIn.value) : 0
-    };
-    const dueVal = dueIn?.value || "";
-    if (dueVal) data.dueAt = new Date(dueVal).toISOString();
-    if (!data.title) { alert("Please add a title."); return; }
-    try {
-      await window.__fb_createTask(data);
-      if (titleIn) titleIn.value = "";
-      if (linkIn) linkIn.value = "";
-      if (descIn) descIn.value = "";
-      if (maxIn)  maxIn.value = "";
-      if (dueIn)  dueIn.value = "";
-      await listTasksForAdmin();
-    } catch (e) {
-      alert('Create failed: ' + (e?.message || e));
-    }
-  }
-
-  async function saveExamScore() {
-    const uid = examUidIn?.value.trim();
-    const sc  = examScoreIn?.value.trim();
-    if (!uid || sc === "") { alert("Provide UID and score."); return; }
-    try {
-      await window.__fb_setExamScore(window.__getISOWeek ? window.__getISOWeek() : undefined, uid, Number(sc));
-      alert("Exam score saved.");
-      examUidIn.value = ""; examScoreIn.value = "";
-    } catch (e) {
-      alert('Save failed: ' + (e?.message || e));
-    }
-  }
-
-  // Wire events (guarded to avoid duplicate listeners that caused double task creation)
-  if (createBtn && !createBtn.dataset.bound) { createBtn.addEventListener('click', createTask, { passive: true }); createBtn.dataset.bound = "1"; }
-  if (examSaveBtn && !examSaveBtn.dataset.bound) { examSaveBtn.addEventListener('click', saveExamScore, { passive: true }); examSaveBtn.dataset.bound = "1"; }
-
-  // Refresh based on role & section visibility
-  function refresh() {
-    toggleByRole();
-    if (window.__isAdmin) listTasksForAdmin();
-    else listTasksForStudent();
-  }
-  window.__tasks_refresh = refresh;
-
-  // Initial pass
-  refresh();
-}
-
-// Refresh tasks when the section is shown
-function refreshTasksUI() {
-  if (typeof window.__tasks_refresh === 'function') window.__tasks_refresh();
-}
-
-/* =========================
-   ADMIN: Manage Students (Reset/Delete) — Refresh List button
-   ========================= */
-function wireManageStudents() {
-  const btn   = $("admin-refresh-students");
-  const tbody = $("admin-students-tbody");
-  if (!btn || !tbody) return;
-
-  async function refresh() {
-    if (!window.__isAdmin) { tbody.innerHTML = '<tr><td colspan="3">Admin only.</td></tr>'; return; }
-    tbody.innerHTML = '<tr><td colspan="3">Loading…</td></tr>';
-    try {
-      const rows = await (window.__fb_listApprovedStudents ? window.__fb_listApprovedStudents() : []);
-      tbody.innerHTML = '';
-      if (!rows.length) { tbody.innerHTML = '<tr><td colspan="3">No approved students.</td></tr>'; return; }
-      rows.forEach(s => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>${s.displayName || '(Unnamed)'}</td>
-          <td><code>${s.uid}</code></td>
-          <td>
-            <button data-act="reset">Reset</button>
-            <button data-act="delete" style="background:#dc2626">Delete</button>
-          </td>
-        `;
-        tr.querySelector('[data-act="reset"]').onclick = async () => {
-          if (!confirm(`Reset ${s.displayName || s.uid}?`)) return;
-          try { await window.__fb_adminResetUser(s.uid); alert('Reset done.'); refresh(); }
-          catch(e){ alert('Reset failed: ' + (e?.message || e)); }
-        };
-        tr.querySelector('[data-act="delete"]').onclick = async () => {
-          if (!confirm(`Delete ${s.displayName || s.uid}? This removes the Firestore user doc.`)) return;
-          try { await window.__fb_adminDeleteUser(s.uid); alert('Deleted.'); refresh(); }
-          catch(e){ alert('Delete failed: ' + (e?.message || e)); }
-        };
-        tbody.appendChild(tr);
-      });
-    } catch (e) {
-      console.error(e);
-      tbody.innerHTML = '<tr><td colspan="3">Failed to load.</td></tr>';
-    }
-  }
-
-  if (!btn.dataset.bound) { btn.addEventListener('click', refresh); btn.dataset.bound = "1"; }
-  // Auto-refresh when section is shown
-  const cont = $("admin-manage-section");
-  if (cont) {
-    const obs = new MutationObserver(() => {
-      if (!cont.classList.contains('hidden')) refresh();
+    const frag = document.createDocumentFragment();
+    rows.forEach((r, i) => {
+      const li = document.createElement('li');
+      li.textContent = `${i + 1}. ${safeText(r.name)} — ${r.score}`;
+      frag.appendChild(li);
     });
-    obs.observe(cont, { attributes: true, attributeFilter: ['class'] });
-  }
-}
-
-/* =========================
-   ADMIN: View Submissions (navbar item injected for admins)
-   ========================= */
-function wireAdminSubmissions() {
-  // Build section if not present
-  let section = $("admin-submissions-section");
-  if (!section) {
-    section = document.createElement("section");
-    section.id = "admin-submissions-section";
-    section.className = "hidden";
-    section.innerHTML = `
-      <h2>📥 Admin: View Submissions</h2>
-      <div class="card">
-        <div class="task-form">
-          <select id="subs-task-select"><option value="">Loading tasks…</option></select>
-          <button id="subs-refresh">Refresh</button>
-        </div>
-        <div class="table-wrap" style="margin-top:10px;">
-          <table class="progress-table">
-            <thead><tr><th>Student</th><th>Link</th><th>Score</th><th>Action</th></tr></thead>
-            <tbody id="subs-tbody"></tbody>
-          </table>
-        </div>
-      </div>
-    `;
-    document.querySelector(".main-content main")?.appendChild(section);
+    list.appendChild(frag);
   }
 
-  const select = $("sub-task-select") || $("subs-task-select");
-  const refreshBtn = $("sub-refresh") || $("subs-refresh");
-  const tbody = $("submissions-tbody") || $("subs-tbody");
-
-  async function loadTasksIntoSelect() {
-    if (!select) return; // <- add this line
-    if (!window.__isAdmin) { select.innerHTML = `<option value="">Admin only</option>`; return; }
-    if (!window.__isAdmin) { select.innerHTML = `<option value="">Admin only</option>`; return; }
-    try {
-      const wk = window.__getISOWeek ? window.__getISOWeek() : undefined;
-      const tasks = await (window.__fb_listTasks ? window.__fb_listTasks(wk) : []);
-      select.innerHTML = `<option value="">— Select a task —</option>`;
-      tasks.forEach(t => {
-        const opt = document.createElement('option');
-        opt.value = t.id;
-        opt.textContent = `${t.title || '(Untitled)'} — ${t.dueAt ? new Date(t.dueAt).toLocaleString() : 'No due'}`;
-        select.appendChild(opt);
-      });
-    } catch (e) {
-      console.warn('loadTasksIntoSelect failed:', e);
-      select.innerHTML = `<option value="">Failed to load tasks</option>`;
-    }
-  }
-
-  async function loadSubmissions() {
-    if (!tbody) return; // <- add this line
-    if (!window.__isAdmin) { tbody.innerHTML = '<tr><td colspan="4">Admin only.</td></tr>'; return; }
-    if (!window.__isAdmin) { tbody.innerHTML = '<tr><td colspan="4">Admin only.</td></tr>'; return; }
-    const taskId = select.value;
-    if (!taskId) { tbody.innerHTML = '<tr><td colspan="4">Pick a task.</td></tr>'; return; }
-    try {
-      if (typeof window.__fb_listSubmissions !== 'function') {
-        tbody.innerHTML = '<tr><td colspan="4">Please update firebase.js to include __fb_listSubmissions.</td></tr>';
+  // Weekly: subscribe only while visible
+  let weeklyLBUnsub = null;
+  async function enterWeeklyLeaderboard() {
+    const list = $('weekly-leaderboard-list');
+    if (!list) return;
+    list.innerHTML = '<li>Loading...</li>';
+    weeklyLBUnsub = APP.FB.subscribeWeeklyLeaderboard((rows) => {
+      list.innerHTML = '';
+      if (!rows?.length) {
+        list.innerHTML = '<li>No data yet.</li>';
         return;
       }
-      const wk = window.__getISOWeek ? window.__getISOWeek() : undefined;
-      const subs = await window.__fb_listSubmissions(wk, taskId);
+      const frag = document.createDocumentFragment();
+      rows.forEach((r, i) => {
+        const li = document.createElement('li');
+        li.textContent = `${i + 1}. ${safeText(r.name)} — ${r.score}`;
+        frag.appendChild(li);
+      });
+      list.appendChild(frag);
+    });
+  }
+  function exitWeeklyLeaderboard() {
+    try { weeklyLBUnsub?.unsubscribe?.(); } catch {}
+    weeklyLBUnsub = null;
+  }
+
+  /* -------------------------------------------------------
+   * Submissions (Admin)
+   * ----------------------------------------------------- */
+  async function renderAdminSubmissions() {
+    const sel = $('sub-task-select');
+    const tbody = $('submissions-tbody');
+    const btn = $('sub-refresh');
+    if (!sel || !tbody || !btn) return;
+
+    // Load tasks into select once at enter
+    const tasks = await APP.FB.fetchTasksForSelect();
+    sel.innerHTML = '';
+    const f = document.createDocumentFragment();
+    tasks.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t.id;
+      opt.textContent = `${t.title} (${t.max ?? 0} pts)`;
+      f.appendChild(opt);
+    });
+    sel.appendChild(f);
+
+    async function loadSubs() {
+      const taskId = sel.value;
       tbody.innerHTML = '';
-      if (!subs.length) { tbody.innerHTML = '<tr><td colspan="4">No submissions yet.</td></tr>'; return; }
-      subs.forEach(s => {
+      if (!taskId) return;
+      const subs = await APP.FB.fetchSubmissionsForTask(taskId);
+      if (!subs.length) {
+        tbody.innerHTML = '<tr><td colspan="4">No submissions yet.</td></tr>';
+        return;
+      }
+      const frag = document.createDocumentFragment();
+      subs.forEach((s) => {
         const tr = document.createElement('tr');
-        const link = s.link ? `<a href="${s.link}" target="_blank" rel="noopener">Open</a>` : '—';
         tr.innerHTML = `
-          <td>${s.displayName || s.uid}</td>
-          <td>${link}</td>
-          <td><input data-uid="${s.uid}" type="number" min="0" step="1" value="${s.score ?? ''}" style="width:100px;"></td>
-          <td><button data-uid="${s.uid}">Save</button></td>
+          <td data-th="Student">${safeText(s.name || s.uid)}</td>
+          <td data-th="Submission">${s.link ? `<a href="${s.link}" target="_blank" rel="noopener">Open</a>` : '—'}</td>
+          <td data-th="Score"><input type="number" min="0" step="1" value="${Number(s.score ?? 0)}" style="max-width:100px"></td>
+          <td data-th="Actions"><button>Save</button></td>
         `;
-        tr.querySelector('button[data-uid]').onclick = async (ev) => {
-          const uid = ev.currentTarget.getAttribute('data-uid');
-          const val = tr.querySelector('input[data-uid]').value;
+        const input = tr.querySelector('input');
+        const btn = tr.querySelector('button');
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
           try {
-            await window.__fb_scoreSubmission(wk, taskId, uid, Number(val || 0));
-            alert('Saved.');
+            const score = parseInt(input.value, 10) || 0;
+            await APP.FB.scoreSubmission(taskId, s.uid, score);
+            toast('Score saved.');
           } catch (e) {
-            alert('Save failed: ' + (e?.message || e));
+            console.error(e);
+            toast('Failed to save score', 'error');
+          } finally {
+            btn.disabled = false;
           }
-        };
-        tbody.appendChild(tr);
+        });
+        frag.appendChild(tr);
       });
-    } catch (e) {
-      console.error(e);
-      tbody.innerHTML = '<tr><td colspan="4">Failed to load.</td></tr>';
-    }
-  }
-
-  // Bind (guarded)
-  if (refreshBtn && !refreshBtn.dataset.bound) { refreshBtn.addEventListener('click', loadSubmissions); refreshBtn.dataset.bound = "1"; }
-  if (select && !select.dataset.bound) { select.addEventListener('change', loadSubmissions); select.dataset.bound = "1"; }
-
-  // Expose helpers for deep-linking from Tasks
-  // Simple toast popup for notifications
-  window.showToast = function(msg, timeoutMs = 5000){
-    const cont = document.getElementById('toast-container');
-    if (!cont) return alert(msg); // fallback
-    const div = document.createElement('div');
-    div.className = 'toast';
-    div.textContent = msg;
-    cont.appendChild(div);
-    setTimeout(() => { div.style.opacity = '0'; div.style.transform = 'translateY(-4px)'; }, timeoutMs - 400);
-    setTimeout(() => { cont.removeChild(div); }, timeoutMs);
-  };
-
-  window.__subs_refreshOnShow = async () => {
-    applyAdminNavVisibility(!!window.__isAdmin);
-    await loadTasksIntoSelect();
-    await loadSubmissions();
-  };
-  window.__subs_selectTaskId = async (taskId) => {
-    await loadTasksIntoSelect();
-    if (select) select.value = taskId || '';
-    await loadSubmissions();
-  };
-
-  // If this section is already visible (e.g., after injection), initialize it
-  if (!section.classList.contains('hidden')) window.__subs_refreshOnShow();
-}
-
-/* =========================
-   ATTENDANCE (Admin + Student)
-   ========================= */
-function initAttendance() {
-  // Elements
-  const tabTake     = $('att-tab-take');
-  const tabHistory  = $('att-tab-history');
-  const paneTake    = $('att-pane-take');
-  const paneHistory = $('att-pane-history');
-
-  const dateInput   = $('attendance-date');
-  const classNoSel  = $('attendance-classno');
-  const loadBtn     = $('attendance-load');
-  const tableBody   = document.querySelector('#attendance-table tbody');
-  const statusEl    = $('attendance-status');
-  const noteEl      = $('attendance-note');
-
-  const markAllBtn  = $('attendance-mark-all');
-  const clearAllBtn = $('attendance-clear-all');
-  const saveBtn     = $('attendance-save');
-  const saveStatus  = $('attendance-save-status');
-
-  const histDateInput = $('att-hist-date');
-  const histLoadBtn   = $('att-hist-load');
-  const histBody      = document.querySelector('#att-hist-table tbody');
-  const histMeta      = $('att-hist-meta');
-
-  const studentView  = $('attendance-student-view');
-  const myTableBody  = document.querySelector('#my-attendance-table tbody');
-
-  // Defaults: fill today in date pickers
-  (function initDates(){
-    const t = new Date();
-    const yyyy = t.getFullYear(), mm = String(t.getMonth()+1).padStart(2,'0'), dd = String(t.getDate()).padStart(2,'0');
-    if (dateInput)     dateInput.value = `${yyyy}-${mm}-${dd}`;
-    if (histDateInput) histDateInput.value = `${yyyy}-${mm}-${dd}`;
-  })();
-
-  // Tabs
-  tabTake?.addEventListener('click', () => {
-    tabTake.classList.add('active'); tabHistory?.classList.remove('active');
-    paneTake?.classList.remove('hidden'); paneHistory?.classList.add('hidden');
-  });
-  tabHistory?.addEventListener('click', () => {
-    tabHistory.classList.add('active'); tabTake?.classList.remove('active');
-    paneHistory?.classList.remove('hidden'); paneTake?.classList.add('hidden');
-    if (histBody) histBody.innerHTML = '<tr><td colspan="2">Pick a date and press “Load History”.</td></tr>';
-    if (histMeta) histMeta.textContent = '—';
-  });
-
-  let students = []; // [{uid, displayName}]
-  let stateMap = {}; // uid -> {present:boolean}
-  let dirty = false;
-
-  const dateKey = () => (dateInput?.value || '').trim();
-  const setStatus = (m) => { if (statusEl) statusEl.textContent = m || ''; };
-  const setSaveStatus = (m) => { if (saveStatus) saveStatus.textContent = m || ''; };
-
-  function renderNote() {
-    const isAdmin = !!window.__isAdmin;
-
-    // Toggle admin vs student panels
-    if (!isAdmin) {
-      tabTake && (tabTake.style.display = 'none');
-      tabHistory && (tabHistory.style.display = 'none');
-      paneTake && (paneTake.style.display = 'none');
-      paneHistory && (paneHistory.style.display = 'none');
-      studentView && studentView.classList.remove('hidden');
-    } else {
-      tabTake && (tabTake.style.display = '');
-      tabHistory && (tabHistory.style.display = '');
-      paneTake && (paneTake.style.display = '');
-      paneHistory && (paneHistory.style.display = (tabHistory?.classList.contains('active') ? '' : 'none'));
-      studentView && studentView.classList.add('hidden');
+      tbody.appendChild(frag);
     }
 
-    if (noteEl) noteEl.textContent = isAdmin ? "You can edit attendance." : "Read‑only attendance view.";
-
-    // Disable admin-only controls if not admin
-    [classNoSel, dateInput, histDateInput, markAllBtn, clearAllBtn, saveBtn].forEach(el => { if (el) el.disabled = !isAdmin; });
-
-    if (!isAdmin) renderMyAttendance();
+    if (!btn.__bound) {
+      btn.addEventListener('click', loadSubs);
+      btn.__bound = true;
+    }
+    await loadSubs();
   }
 
-  async function loadAttendance() {
-    if (!window.__isAdmin) return;
-    if (!tableBody || !dateKey()) return;
+  /* -------------------------------------------------------
+   * Attendance
+   * ----------------------------------------------------- */
+  function switchAttTab(which) {
+    const takeBtn = $('att-tab-take');
+    const histBtn = $('att-tab-history');
+    const takePane = $('att-pane-take');
+    const histPane = $('att-pane-history');
 
-    setStatus('Loading students & attendance…');
-    setSaveStatus(''); dirty = false;
-    try {
-      students = await (window.__fb_listStudents ? window.__fb_listStudents() : []);
-      const att = await (window.__fb_getAttendance ? window.__fb_getAttendance(dateKey()) : {});
-      stateMap = {};
-      students.forEach(s => { stateMap[s.uid] = { present: !!(att[s.uid]?.present), displayName: s.displayName || null }; });
+    const takeActive = which === 'take';
+    takeBtn.classList.toggle('active', takeActive);
+    histBtn.classList.toggle('active', !takeActive);
+    setHidden(takePane, !takeActive);
+    setHidden(histPane, takeActive);
+  }
 
-      // render table
-      tableBody.innerHTML = '';
-      students.forEach(s => {
-        const tr = document.createElement('tr');
-        const nameTd = document.createElement('td'); nameTd.textContent = s.displayName || '(Unnamed)';
-        const presentTd = document.createElement('td');
-        const chk = document.createElement('input'); chk.type = 'checkbox'; chk.className = 'att-present'; chk.checked = !!stateMap[s.uid]?.present;
-        chk.onchange = () => { stateMap[s.uid] = { present: chk.checked, displayName: s.displayName }; dirty = true; };
-        presentTd.appendChild(chk);
-        tr.append(nameTd, presentTd);
-        tableBody.appendChild(tr);
-      });
-      setStatus(`Loaded ${students.length} students.`);
+  async function attendanceAdminEnter() {
+    // Bind admin controls
+    $('attendance-load')?.addEventListener('click', loadAttendanceAdminOnce);
+    $('attendance-mark-all')?.addEventListener('click', markAllPresent);
+    $('attendance-clear-all')?.addEventListener('click', clearAllAttendanceMarks);
+    $('attendance-save')?.addEventListener('click', saveAttendanceAdmin);
+    $('att-hist-load')?.addEventListener('click', loadAttendanceHistoryAdminOnce);
+  }
 
-      // meta: class no
-      try {
-        const meta = await (window.__fb_getAttendanceMeta ? window.__fb_getAttendanceMeta(dateKey()) : {});
-        if (classNoSel) {
-          const v = (meta.classNo ?? '').toString();
-          classNoSel.value = v && Array.from(classNoSel.options).some(o => o.value === v) ? v : '';
+  let _attRows = []; // [{uid, name, present}]
+  async function loadAttendanceAdminOnce() {
+    const date = $('attendance-date').value;
+    if (!date) { toast('Select a date', 'warn'); return; }
+    const rows = await APP.FB.loadAttendanceAdmin(date);
+    _attRows = rows || [];
+    renderAttendanceTable(_attRows);
+    $('attendance-note').textContent = `Loaded ${_attRows.length} students for ${date}`;
+  }
+
+  function renderAttendanceTable(rows) {
+    const tbody = bySel('#attendance-table tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    const frag = document.createDocumentFragment();
+    rows.forEach((r, idx) => {
+      const tr = document.createElement('tr');
+      const name = document.createElement('td');
+      name.textContent = r.name || r.uid;
+      const present = document.createElement('td');
+      const chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.checked = !!r.present;
+      chk.addEventListener('change', () => { _attRows[idx].present = chk.checked; }, { passive: true });
+      present.appendChild(chk);
+      tr.appendChild(name);
+      tr.appendChild(present);
+      frag.appendChild(tr);
+    });
+    tbody.appendChild(frag);
+  }
+
+  function markAllPresent() {
+    _attRows = _attRows.map(r => ({ ...r, present: true }));
+    renderAttendanceTable(_attRows);
+  }
+  function clearAllAttendanceMarks() {
+    _attRows = _attRows.map(r => ({ ...r, present: false }));
+    renderAttendanceTable(_attRows);
+  }
+
+  async function saveAttendanceAdmin() {
+    const date = $('attendance-date').value;
+    const classNo = $('attendance-classno').value;
+    if (!date || !classNo) { toast('Pick date and class no.', 'warn'); return; }
+    const res = await APP.FB.saveAttendanceAdmin(date, classNo, _attRows);
+    $('attendance-save-status').textContent = `Saved (${res.writes ?? 0} writes).`;
+    toast('Attendance saved.');
+  }
+
+  async function loadAttendanceHistoryAdminOnce() {
+    const date = $('att-hist-date').value;
+    if (!date) { toast('Select a date', 'warn'); return; }
+    const rows = await APP.FB.loadAttendanceHistoryAdmin(date);
+    const tbody = bySel('#att-hist-table tbody');
+    const meta = $('att-hist-meta');
+    tbody.innerHTML = '';
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="2">No records.</td></tr>';
+      meta.textContent = '—';
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td data-th="Student">${safeText(r.name || r.uid)}</td><td data-th="Status">${r.present ? 'Present' : 'Absent'}</td>`;
+      frag.appendChild(tr);
+    });
+    tbody.appendChild(frag);
+    meta.textContent = `Total: ${rows.length}`;
+  }
+
+  async function renderAttendanceStudent() {
+    const tbody = bySel('#my-attendance-table tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    const rows = await APP.FB.fetchStudentAttendance('me');
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="3">No attendance yet.</td></tr>';
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td data-th="Date">${safeText(r.date)}</td><td data-th="Class No">${safeText(r.classNo ?? '')}</td><td data-th="Status">${r.present ? 'Present' : 'Absent'}</td>`;
+      frag.appendChild(tr);
+    });
+    tbody.appendChild(frag);
+  }
+
+  /* -------------------------------------------------------
+   * Approvals & Manage Students
+   * ----------------------------------------------------- */
+  async function renderApprovals() {
+    const host = $('approvals-list');
+    if (!host) return;
+    host.innerHTML = '';
+    const items = await APP.FB.fetchApprovals();
+    if (!items.length) {
+      host.textContent = 'No pending approvals.';
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    items.forEach(u => {
+      const row = document.createElement('div');
+      row.className = 'task-row';
+      row.innerHTML = `<div><b>${safeText(u.displayName || u.email || u.uid)}</b><div class="muted">${safeText(u.email || '')}</div></div>`;
+      const right = document.createElement('div');
+      const btn = document.createElement('button');
+      btn.textContent = 'Approve';
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          await APP.FB.approveUser(u.uid);
+          row.remove();
+          toast('User approved.');
+        } catch (e) {
+          console.error(e);
+          toast('Failed to approve', 'error');
+        } finally {
+          btn.disabled = false;
         }
-      } catch { if (classNoSel) classNoSel.value = ''; }
-
-      renderNote();
-    } catch (e) {
-      console.error(e);
-      setStatus('Failed to load attendance.');
-    }
-  }
-
-  async function saveAttendance() {
-    if (!window.__isAdmin || !dateKey()) return;
-    try {
-      if (classNoSel && classNoSel.value !== '') {
-        try { await (window.__fb_setAttendanceMeta ? window.__fb_setAttendanceMeta(dateKey(), Number(classNoSel.value)) : Promise.resolve()); }
-        catch(e){ console.warn('setAttendanceMeta failed', e); }
-      }
-      if (dirty) {
-        const records = students.map(s => ({ uid: s.uid, present: !!(stateMap[s.uid]?.present), displayName: s.displayName }));
-        await (window.__fb_saveAttendanceBulk ? window.__fb_saveAttendanceBulk(dateKey(), records) : Promise.resolve());
-        dirty = false;
-      }
-      setSaveStatus('Saved ✔');
-    } catch (e) {
-      console.error(e);
-      setSaveStatus('Save failed.');
-    }
-  }
-
-  async function loadHistoryAdmin() {
-    if (!window.__isAdmin) return;
-    if (!histBody || !histDateInput) return;
-    const dkey = (histDateInput.value || '').trim();
-    if (!dkey) {
-      histBody.innerHTML = '<tr><td colspan="2">Pick a date first.</td></tr>';
-      if (histMeta) histMeta.textContent = '—';
-      return;
-    }
-    histBody.innerHTML = '<tr><td colspan="2">Loading…</td></tr>';
-    if (histMeta) histMeta.textContent = 'Loading…';
-    try {
-      const studentsList = await (window.__fb_listStudents ? window.__fb_listStudents() : []);
-      const att = await (window.__fb_getAttendance ? window.__fb_getAttendance(dkey) : {});
-      let presentCount = 0;
-      histBody.innerHTML = '';
-      studentsList.forEach(s => {
-        const isPresent = !!(att[s.uid]?.present);
-        if (isPresent) presentCount++;
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${s.displayName || '(Unnamed)'}</td><td>${isPresent ? 'Present' : 'Absent'}</td>`;
-        histBody.appendChild(tr);
       });
-      const absentCount = studentsList.length - presentCount;
-      const meta = await (window.__fb_getAttendanceMeta ? window.__fb_getAttendanceMeta(dkey) : {});
-      const classNoTxt = meta?.classNo ? `Class No: ${meta.classNo} · ` : '';
-      if (histMeta) histMeta.textContent = `${classNoTxt}Present: ${presentCount} · Absent: ${absentCount} · Total: ${studentsList.length}`;
-    } catch (e) {
-      console.error(e);
-      histBody.innerHTML = '<tr><td colspan="2">Failed to load.</td></tr>';
-      if (histMeta) histMeta.textContent = 'Failed to load.';
-    }
+      right.appendChild(btn);
+      row.appendChild(right);
+      frag.appendChild(row);
+    });
+    host.appendChild(frag);
   }
 
-  async function renderMyAttendance() {
-    if (!myTableBody) return;
-    myTableBody.innerHTML = '<tr><td colspan="3">Loading…</td></tr>';
-    try {
-      const rows = await (window.__fb_getMyAttendanceHistoryWithClass ? window.__fb_getMyAttendanceHistoryWithClass(180) : []);
-      myTableBody.innerHTML = '';
-      if (!rows.length) { myTableBody.innerHTML = '<tr><td colspan="3">No records yet.</td></tr>'; return; }
-      rows.forEach(r => {
+  async function renderManageStudents() {
+    const tbody = $('admin-students-tbody');
+    const refreshBtn = $('admin-refresh-students');
+    if (!tbody || !refreshBtn) return;
+
+    async function loadList() {
+      tbody.innerHTML = '';
+      const list = await APP.FB.fetchStudentsForManage();
+      if (!list.length) {
+        tbody.innerHTML = '<tr><td colspan="3">No students.</td></tr>';
+        return;
+      }
+      const frag = document.createDocumentFragment();
+      list.forEach(s => {
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${r.date}</td><td>${r.classNo ?? '—'}</td><td>${r.present ? 'Present' : 'Absent'}</td>`;
-        myTableBody.appendChild(tr);
+        tr.innerHTML = `<td data-th="Name">${safeText(s.displayName || s.email || s.uid)}</td>
+                        <td data-th="UID" style="font-family:monospace;">${safeText(s.uid)}</td>
+                        <td data-th="Actions"></td>`;
+        const tdActions = tr.lastElementChild;
+
+        const btnReset = document.createElement('button');
+        btnReset.textContent = 'Reset';
+        btnReset.addEventListener('click', async () => {
+          if (!confirm('Reset this student?')) return;
+          btnReset.disabled = true;
+          try {
+            await APP.FB.resetStudent(s.uid);
+            toast('Student reset.');
+          } catch (e) {
+            console.error(e);
+            toast('Failed to reset', 'error');
+          } finally {
+            btnReset.disabled = false;
+          }
+        });
+
+        const btnDelete = document.createElement('button');
+        btnDelete.textContent = 'Delete';
+        btnDelete.className = 'danger';
+        btnDelete.addEventListener('click', async () => {
+          if (!confirm('Delete this student and all related data?')) return;
+          btnDelete.disabled = true;
+          try {
+            await APP.FB.deleteStudent(s.uid);
+            tr.remove();
+            toast('Student deleted.');
+          } catch (e) {
+            console.error(e);
+            toast('Failed to delete', 'error');
+          } finally {
+            btnDelete.disabled = false;
+          }
+        });
+
+        tdActions.appendChild(btnReset);
+        tdActions.appendChild(btnDelete);
+        frag.appendChild(tr);
       });
-    } catch (e) {
-      console.warn(e);
-      myTableBody.innerHTML = '<tr><td colspan="3">Failed to load.</td></tr>';
+      tbody.appendChild(frag);
     }
-  }
-  window.__att_renderMyAttendance = renderMyAttendance;
 
-  // Wire events
-  if (loadBtn && !loadBtn.dataset.bound) { loadBtn.addEventListener('click', loadAttendance); loadBtn.dataset.bound = "1"; }
-  dateInput?.addEventListener('change', loadAttendance);
-  if (markAllBtn && !markAllBtn.dataset.bound) { markAllBtn.addEventListener('click', () => {
-    if (!window.__isAdmin) return;
-    document.querySelectorAll('.att-present').forEach(inp => { inp.checked = true; });
-    students.forEach(s => stateMap[s.uid] = { present: true, displayName: s.displayName });
-    dirty = true;
-  }); markAllBtn.dataset.bound = "1"; }
-  if (clearAllBtn && !clearAllBtn.dataset.bound) { clearAllBtn.addEventListener('click', () => {
-    if (!window.__isAdmin) return;
-    document.querySelectorAll('.att-present').forEach(inp => { inp.checked = false; });
-    students.forEach(s => stateMap[s.uid] = { present: false, displayName: s.displayName });
-    dirty = true;
-  }); clearAllBtn.dataset.bound = "1"; }
-  if (saveBtn && !saveBtn.dataset.bound) { saveBtn.addEventListener('click', saveAttendance); saveBtn.dataset.bound = "1"; }
-  if (histLoadBtn && !histLoadBtn.dataset.bound) { histLoadBtn.addEventListener('click', loadHistoryAdmin); histLoadBtn.dataset.bound = "1"; }
-
-  // Expose a hook so router can refresh on show
-  window.__att_refreshOnShow = () => {
-    if (window.__isAdmin) loadAttendance();
-    else renderMyAttendance();
-    renderNote();
-  };
-
-  // First pass
-  renderNote();
-  if (window.__isAdmin) loadAttendance(); else renderMyAttendance();
-}
-
-// React to admin role toggles immediately (called from firebase.js)
-window.__onAdminStateChanged = function(isAdmin) {
-  applyAdminNavVisibility(!!isAdmin);
-  // Attendance refresh
-  if (currentSectionId === 'attendance-section' && typeof window.__att_refreshOnShow === 'function') {
-    window.__att_refreshOnShow();
-  }
-  // Tasks refresh
-  if (currentSectionId === 'tasks-section' && typeof window.__tasks_refresh === 'function') {
-    window.__tasks_refresh();
-  }
-  // Submissions refresh
-  if (currentSectionId === 'admin-submissions-section' && typeof window.__subs_refreshOnShow === 'function') {
-    window.__subs_refreshOnShow();
-  }
-  // Progress refresh (combined view)
-  if (currentSectionId === 'progress-section' && typeof window.__progress_refreshOnShow === 'function') {
-    window.__progress_refreshOnShow();
-  }
-
-};
-
-function wireAdminResetDB(){
-  const section = $("admin-resetdb-section");
-  if (!section) return;
-  const input  = $("resetdb-confirm");
-  const btn    = $("resetdb-run");
-  const status = $("resetdb-status");
-
-  function refreshVisibility(){
-    // show only for admins
-    section.style.display = window.__isAdmin ? "" : "none";
-  }
-
-  async function runWipe(){
-    if (!window.__isAdmin) { alert("Admin only."); return; }
-    const phrase = (input?.value || "").trim().toUpperCase();
-    if (phrase !== "I UNDERSTAND") {
-      alert('Please type exactly: I UNDERSTAND');
-      return;
+    if (!refreshBtn.__bound) {
+      refreshBtn.addEventListener('click', loadList);
+      refreshBtn.__bound = true;
     }
-    if (!confirm("This will delete ALL course data. Are you absolutely sure?")) return;
-    if (!confirm("Final confirmation: proceed with FULL WIPE?")) return;
+    await loadList();
+  }
 
-    btn.disabled = true; status.textContent = "Wiping… this may take a minute.";
-    try {
-      if (typeof window.__fb_adminWipeAll !== "function") throw new Error("Missing __fb_adminWipeAll in firebase.js");
-      await window.__fb_adminWipeAll();
-      status.textContent = "Done. All course data cleared.";
-      input.value = "";
-      // Optional: toast + redirect user back to dashboard
-      window.showToast && window.showToast("Database wiped successfully.");
-    } catch (e) {
-      console.error(e);
-      status.textContent = "Failed: " + (e?.message || e);
-    } finally {
-      btn.disabled = false;
+  /* -------------------------------------------------------
+   * Admin: Reset DB
+   * ----------------------------------------------------- */
+  function bindResetDB() {
+    const input = $('resetdb-confirm');
+    const btn = $('resetdb-run');
+    const status = $('resetdb-status');
+    if (!input || !btn) return;
+
+    if (!btn.__bound) {
+      btn.addEventListener('click', async () => {
+        if ((input.value || '').trim() !== 'I UNDERSTAND') {
+          toast('Type: I UNDERSTAND', 'warn');
+          input.focus();
+          return;
+        }
+        btn.disabled = true;
+        status.textContent = 'Wiping...';
+        try {
+          const res = await APP.FB.resetDatabase();
+          status.textContent = `Done. Writes: ${res.writes ?? 0}, Deletes: ${res.deletes ?? 0}. Signing out...`;
+          toast('Database wiped. Signing out...');
+          setTimeout(() => APP.FB.signOut?.(), 1000);
+        } catch (e) {
+          console.error(e);
+          status.textContent = 'Failed.';
+          toast('Reset failed', 'error');
+        } finally {
+          btn.disabled = false;
+        }
+      });
+      btn.__bound = true;
     }
   }
 
-  if (btn && !btn.dataset.bound) { btn.addEventListener("click", runWipe); btn.dataset.bound = "1"; }
+  /* -------------------------------------------------------
+   * Section registrations
+   * ----------------------------------------------------- */
+  registerSection('practice-select', {
+    enter: () => renderPracticeSelect()
+  });
 
-  // refresh on role changes
-  refreshVisibility();
-  const obs = new MutationObserver(refreshVisibility);
-  obs.observe(section, { attributes: true, attributeFilter: ["class"] });
-}
-
-// call it on load and after login
-// In window.onload (after other wires):
-//   wireAdminResetDB();
-// In window.__initAfterLogin():
-//   wireAdminResetDB();
-function wireSoftRefreshButton(){
-  const btn = $("soft-refresh-btn");
-  if (!btn || btn.dataset.bound) return;
-
-  async function doRefresh(){
-    btn.disabled = true;
-    try {
-      // Commit any locally buffered practice so the new data reflects it
-      if (typeof window.__fb_commitLocalPendingSession === 'function') {
-        try { await window.__fb_commitLocalPendingSession(); } catch {}
-      }
-
-      // Ask firebase.js to re-subscribe to Firestore live queries
-      if (typeof window.__softRefreshData === 'function') {
-        await window.__softRefreshData();
-      }
-
-      // Re-render currently relevant UI pieces
-      try { refreshTasksUI(); } catch {}
-      try { renderProgress(); } catch {}
-      try { wireProgressCombined(); } catch {}
-
-      // If these sections are visible, refresh them too
-      if (currentSectionId === 'attendance-section' && typeof window.__att_refreshOnShow === 'function') {
-        window.__att_refreshOnShow();
-      }
-      if (currentSectionId === 'admin-submissions-section' && typeof window.__subs_refreshOnShow === 'function') {
-        window.__subs_refreshOnShow();
-      }
-
-      // small toast
-      if (typeof window.showToast === 'function') {
-        window.showToast('Refreshed from database.');
-      }
-    } finally {
-      btn.disabled = false;
+  registerSection('practice', {
+    enter: () => {
+      APP.ui.progressBar = $('deck-progress-bar');
+      APP.ui.progressText = $('deck-progress-text');
+      updateProgressUI();
+    },
+    exit: () => {
+      // nothing to unsubscribe here; session commit handled on finish
     }
+  });
+
+  registerSection('lectures-section', {
+    enter: () => renderLectures()
+  });
+
+  registerSection('tasks-section', {
+    enter: async () => {
+      // firebase.js will toggle admin/student visibility
+      await Promise.allSettled([
+        renderTasksStudent(),
+        renderTasksAdmin()
+      ]);
+    },
+    exit: () => {}
+  });
+
+  registerSection('progress-section', {
+    enter: async () => {
+      await Promise.allSettled([
+        renderProgressStudent(),
+        renderProgressAdmin()
+      ]);
+    }
+  });
+
+  registerSection('course-leaderboard-section', {
+    enter: () => renderCourseLeaderboard()
+  });
+
+  registerSection('weekly-leaderboard-section', {
+    enter: () => enterWeeklyLeaderboard(),
+    exit: () => exitWeeklyLeaderboard()
+  });
+
+  registerSection('admin-submissions-section', {
+    enter: () => renderAdminSubmissions()
+  });
+
+  registerSection('attendance-section', {
+    enter: async () => {
+      switchAttTab('take');
+      await attendanceAdminEnter();
+      await renderAttendanceStudent();
+    }
+  });
+
+  registerSection('admin-approvals-section', {
+    enter: () => renderApprovals()
+  });
+
+  registerSection('admin-manage-section', {
+    enter: () => renderManageStudents()
+  });
+
+  registerSection('admin-resetdb-section', {
+    enter: () => bindResetDB()
+  });
+
+  registerSection('mistakes-section', {});
+
+  /* -------------------------------------------------------
+   * Refresh pipeline (manual)
+   * ----------------------------------------------------- */
+  async function refreshAll() {
+    await Promise.allSettled([
+      // practice-select: nothing persistent to refresh (manifest cached)
+      // lectures:
+      ensureLectures().then(renderLectures).catch(() => {}),
+      // tasks (student/admin):
+      renderTasksStudent().catch(() => {}),
+      renderTasksAdmin().catch(() => {}),
+      // progress:
+      renderProgressStudent().catch(() => {}),
+      renderProgressAdmin().catch(() => {}),
+      // leaderboards:
+      renderCourseLeaderboard().catch(() => {}),
+      // submissions (only if visible):
+      (APP.currentSection === 'admin-submissions-section' ? renderAdminSubmissions() : Promise.resolve()),
+      // attendance student view (self):
+      renderAttendanceStudent().catch(() => {}),
+    ]);
   }
 
-  btn.addEventListener('click', doRefresh, { passive: true });
-  btn.dataset.bound = "1";
-}
+  /* -------------------------------------------------------
+   * Boot
+   * ----------------------------------------------------- */
+  function boot() {
+    if (APP.booted) return;
+    APP.booted = true;
+
+    APP.ui.toastContainer = $('toast-container');
+    APP.ui.srStatus = $('sr-status');
+
+    bindNav();
+    scheduleMeterLog();
+
+    // if firebase.js already authenticated before this file loaded,
+    // it should call window.__UI.onAuth(...) again; otherwise app stays gated.
+    setSRStatus('Ready.');
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot, { once: true });
+  } else {
+    boot();
+  }
+})();

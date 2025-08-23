@@ -4,14 +4,28 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Basic Robotics – Educational Course Portal</title>
+
+  <!-- Performance hints for Firebase/CDN -->
+  <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+  <link rel="dns-prefetch" href="//www.gstatic.com">
+  <link rel="preconnect" href="https://www.googleapis.com" crossorigin>
+  <link rel="dns-prefetch" href="//www.googleapis.com">
+  <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
+  <link rel="dns-prefetch" href="//firestore.googleapis.com">
+  <link rel="preconnect" href="https://accounts.google.com" crossorigin>
+  <link rel="dns-prefetch" href="//accounts.google.com">
+
   <link rel="stylesheet" href="style.css?v=20250815" />
   <link rel="icon" href="data:," />
 </head>
 <body>
+  <!-- Screen reader status (global) -->
+  <div id="sr-status" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+
   <!-- Auth gate -->
   <div id="auth-gate" class="auth-gate">
-    <div class="auth-card">
-      <h1>Sign in to continue</h1>
+    <div class="auth-card" role="dialog" aria-labelledby="auth-title">
+      <h1 id="auth-title">Sign in to continue</h1>
       <p class="muted">Use your Google account to access lectures, practice, and your portal.</p>
       <button id="auth-btn">🔐 Sign in with Google</button>
       <p id="auth-error" class="error" style="display:none;"></p>
@@ -19,9 +33,9 @@
   </div>
 
   <!-- Waiting-for-approval gate -->
-  <div id="approval-gate" class="auth-gate hidden">
+  <div id="approval-gate" class="auth-gate hidden" role="dialog" aria-labelledby="approval-title">
     <div class="auth-card">
-      <h1>⏳ Waiting for approval</h1>
+      <h1 id="approval-title">⏳ Waiting for approval</h1>
       <p class="muted">Your account was created, but access isn’t granted yet. Please wait for the teacher to approve you.</p>
       <p class="muted" style="margin-top:6px;">You can close this tab and come back later.</p>
     </div>
@@ -29,44 +43,42 @@
 
   <!-- App (hidden until signed in AND approved or admin) -->
   <div id="app-root" class="layout hidden">
-    <nav class="sidebar">
+    <nav class="sidebar" role="navigation" aria-label="Main navigation">
       <h2>📘 Menu</h2>
-      <button onclick="showSection('practice-select')">📝 Practice</button>
-      <button onclick="showSection('lectures-section')">📖 Lectures</button>
-      <button onclick="showSection('tasks-section')">🗂️ Tasks</button>
-      <button onclick="showSection('progress-section')">📈 Progress</button>
-      <button onclick="showSection('course-leaderboard-section')">🏆 Course Leaderboard</button>
-      <button onclick="showSection('weekly-leaderboard-section')">📅 Weekly Leaderboard</button>
-      <button onclick="showSection('attendance-section')">🗒️ Attendance</button>
 
-      <!-- Admin-only nav items (students won’t see these; JS toggles) -->
-      <button class="admin-only" onclick="showSection('admin-approvals-section')">✅ Admin: Approvals</button>
-      <button class="admin-only" onclick="showSection('admin-manage-section')">🧑‍🏫 Admin: Manage Students</button>
-      <button class="admin-only" onclick="showSection('admin-submissions-section')">🔎 Admin: View Submissions</button>
+      <!-- Primary nav (replacing inline onclick with data-nav) -->
+      <button data-nav="practice-select">📝 Practice</button>
+      <button data-nav="lectures-section">📖 Lectures</button>
+      <button data-nav="tasks-section">🗂️ Tasks</button>
+      <button data-nav="progress-section">📈 Progress</button>
+      <button data-nav="course-leaderboard-section">🏆 Course Leaderboard</button>
+      <button data-nav="weekly-leaderboard-section">📅 Weekly Leaderboard</button>
+      <button data-nav="attendance-section">🗒️ Attendance</button>
 
-      <button onclick="showSection('simulation-section')">🔧 Simulation</button>
-      <button onclick="__signOut()">🚪 Sign out</button>
-      <button class="admin-only" onclick="showSection('admin-resetdb-section')">🧹 Admin: Reset DB</button>
+      <!-- Admin-only nav items (JS toggles visibility) -->
+      <button class="admin-only" data-nav="admin-approvals-section">✅ Admin: Approvals</button>
+      <button class="admin-only" data-nav="admin-manage-section">🧑‍🏫 Admin: Manage Students</button>
+      <button class="admin-only" data-nav="admin-submissions-section">🔎 Admin: View Submissions</button>
 
+      <button data-nav="simulation-section">🔧 Simulation</button>
+      <button id="signout-btn">🚪 Sign out</button>
+      <button class="admin-only" data-nav="admin-resetdb-section">🧹 Admin: Reset DB</button>
     </nav>
 
     <!-- Weekly Tasks flyout -->
-    <div id="todo-flyout" class="todo-flyout hidden">
+    <div id="todo-flyout" class="todo-flyout hidden" role="complementary" aria-label="Weekly Tasks">
       <div class="todo-head">
         <span>Weekly Tasks</span>
-        <!-- countdown removed by request -->
+        <!-- countdown intentionally omitted -->
       </div>
       <ul id="todo-list" class="todo-list"></ul>
-      <!-- Teacher-only quick add (legacy placeholder – optional) -->
-      <div id="admin-row" class="admin-row hidden">
-        
-      </div>
+      <div id="admin-row" class="admin-row hidden"></div>
     </div>
 
     <div class="main-content">
       <header>
         <h1>REC- Basic Robotics</h1>
-        <div id="score">
+        <div id="score" aria-live="polite">
           ✅ Correct: <span id="correct">0</span>
           ❌ Wrong: <span id="wrong">0</span>
           ➖ Skipped: <span id="skipped">0</span>
@@ -74,7 +86,7 @@
         <button id="soft-refresh-btn" title="Refresh from database">🔄 Refresh</button>
       </header>
 
-      <main>
+      <main id="main" role="main" tabindex="-1">
         <!-- Practice Select -->
         <section id="practice-select">
           <h2>Practice</h2>
@@ -92,7 +104,8 @@
           <div id="question-box"></div>
           <ul id="options"></ul>
           <div class="practice-actions">
-            <button onclick="skipQuestion()">Skip</button>
+            <!-- replaced inline onclick with #btn-skip -->
+            <button id="btn-skip">Skip</button>
           </div>
           <div class="muted" id="resume-hint" style="margin-top:6px;"></div>
         </section>
@@ -112,8 +125,8 @@
           <div id="tasks-admin" class="card hidden">
             <h3>Assign / Edit Weekly Tasks (current ISO week)</h3>
             <div class="task-form">
-              <input id="task-title" placeholder="Title">
-              <input id="task-link" placeholder="Reference file/link (optional)">
+              <input id="task-title" placeholder="Title" autocomplete="off">
+              <input id="task-link" placeholder="Reference file/link (optional)" autocomplete="off">
               <input id="task-due" type="datetime-local">
               <input id="task-max" type="number" min="0" step="1" placeholder="Score (max)">
               <textarea id="task-desc" placeholder="Description"></textarea>
@@ -130,7 +143,7 @@
           <div id="tasks-student" class="card hidden">
             <h3>Your Tasks (this week)</h3>
             <div id="task-student-list" class="task-list">
-              <!-- Each task renders with: title, due, link (optional), and an input + submit button for your submission URL -->
+              <!-- populated by script.js -->
             </div>
           </div>
         </section>
@@ -180,9 +193,8 @@
             </div>
           </div>
 
-          <!-- (Optional) keep legacy attempt details below if you still want them -->
+          <!-- (Optional) legacy attempt details could remain below -->
         </section>
-
 
         <!-- Course Leaderboard -->
         <section id="course-leaderboard-section" class="hidden">
@@ -201,7 +213,7 @@
           <h2>🔧 Simulation</h2>
           <p class="muted">Use Tinkercad to simulate circuits and microcontrollers.</p>
           <a href="https://www.tinkercad.com/" target="_blank" rel="noopener">
-            <button>Open Tinkercad</button>
+            <button type="button">Open Tinkercad</button>
           </a>
         </section>
 
@@ -211,13 +223,13 @@
 
           <!-- ADMIN-ONLY AREA -->
           <div id="attendance-admin-area">
-            <div class="attendance-controls">
-              <button id="att-tab-take" class="active">Take Attendance</button>
-              <button id="att-tab-history">Attendance History</button>
-              <span id="attendance-status" class="muted"></span>
+            <div class="attendance-controls" role="tablist" aria-label="Attendance view tabs">
+              <button id="att-tab-take" class="active" role="tab" aria-selected="true" aria-controls="att-pane-take">Take Attendance</button>
+              <button id="att-tab-history" role="tab" aria-selected="false" aria-controls="att-pane-history">Attendance History</button>
+              <span id="attendance-status" class="muted" aria-live="polite"></span>
             </div>
 
-            <div id="att-pane-take">
+            <div id="att-pane-take" role="tabpanel" aria-labelledby="att-tab-take">
               <div id="attendance-admin-controls" class="attendance-controls">
                 <label for="attendance-date"><b>Date</b></label>
                 <input type="date" id="attendance-date" />
@@ -237,7 +249,7 @@
               <div id="attendance-admin-table-wrap" class="table-wrap">
                 <table id="attendance-table" class="progress-table">
                   <thead>
-                  <tr><th style="min-width:220px;">Student</th><th>Present?</th></tr>
+                    <tr><th style="min-width:220px;">Student</th><th>Present?</th></tr>
                   </thead>
                   <tbody></tbody>
                 </table>
@@ -247,12 +259,12 @@
                 <button id="attendance-mark-all">Mark All Present</button>
                 <button id="attendance-clear-all">Clear All</button>
                 <button id="attendance-save">Save Changes</button>
-                <span id="attendance-save-status" class="muted"></span>
+                <span id="attendance-save-status" class="muted" aria-live="polite"></span>
               </div>
               <p class="muted" id="attendance-note"></p>
             </div>
 
-            <div id="att-pane-history" class="hidden">
+            <div id="att-pane-history" class="hidden" role="tabpanel" aria-labelledby="att-tab-history">
               <div class="attendance-controls">
                 <label for="att-hist-date"><b>Date</b></label>
                 <input type="date" id="att-hist-date" />
@@ -329,6 +341,7 @@
           </div>
         </section>
 
+        <!-- Admin: Reset DB -->
         <section id="admin-resetdb-section" class="hidden admin-only">
           <h2>🧹 Admin: Reset Database</h2>
           <div class="card">
@@ -336,10 +349,13 @@
               This will permanently delete <b>all course data</b> (tasks, submissions, exams, leaderboards, attendance)
               and <b>all non‑admin user profiles</b>. Admin profiles are kept but cleared. You will be signed out after the wipe.
             </p>
+            <p class="muted" role="note">
+              🔔 Backup reminder: consider exporting Firestore data (and Auth users) before wiping, if you might need a restore later.
+            </p>
             <div class="attendance-controls">
-              <input id="resetdb-confirm" placeholder='Type: I UNDERSTAND' style="min-width:260px;">
+              <input id="resetdb-confirm" placeholder='Type: I UNDERSTAND' style="min-width:260px;" aria-label="Type I UNDERSTAND to confirm">
               <button id="resetdb-run" style="background:#dc2626">⚠️ Wipe Everything</button>
-              <span id="resetdb-status" class="muted"></span>
+              <span id="resetdb-status" class="muted" aria-live="polite"></span>
             </div>
           </div>
         </section>
@@ -347,18 +363,18 @@
         <!-- Mistakes -->
         <section id="mistakes-section" class="hidden">
           <h2>Frequent Mistakes</h2>
-          <button onclick="startMistakePractice()">Practice Mistakes</button>
-          <button onclick="clearMistakes()">Clear Mistakes</button>
+          <!-- replaced inline onclick with explicit IDs -->
+          <button id="btn-mistakes-start">Practice Mistakes</button>
+          <button id="btn-mistakes-clear">Clear Mistakes</button>
         </section>
-          <!-- Toasts / Popups -->
-        <div id="toast-container"></div>
 
+        <!-- Toasts / Popups -->
+        <div id="toast-container" role="status" aria-live="polite" aria-atomic="true"></div>
       </main>
     </div>
   </div>
 
   <script type="module" src="firebase.js"></script>
   <script src="script.js?v=20250815"></script>
-
 </body>
 </html>
