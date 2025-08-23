@@ -385,7 +385,7 @@
    * ----------------------------------------------------- */
   async function ensureQuestionsManifest() {
     if (APP.cache.questionsManifest) return APP.cache.questionsManifest;
-    const res = await fetch('questions.json', { cache: 'no-store' });
+    const res = await fetch('/practice/questions.json', { cache: 'no-store' });
     if (!res.ok) throw new Error('Failed to load questions.json');
     const data = await res.json();
     APP.cache.questionsManifest = data;
@@ -632,7 +632,7 @@
    * ----------------------------------------------------- */
   async function ensureLectures() {
     if (APP.cache.lecturesList) return APP.cache.lecturesList;
-    const res = await fetch('lectures.json', { cache: 'no-store' });
+    const res = await fetch('/lectures/lectures.json', { cache: 'no-store' });
     if (!res.ok) throw new Error('Failed to load lectures.json');
     const data = await res.json();
     APP.cache.lecturesList = data;
