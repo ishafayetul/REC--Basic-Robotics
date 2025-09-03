@@ -11,19 +11,20 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
 // --- Firebase project config ---
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: "AIzaSyCG9eot9cPAkKDvzoJvfw8AGtqag3u2uWA",
-  authDomain: "basic-robotics.firebaseapp.com",
-  projectId: "basic-robotics",
-  storageBucket: "basic-robotics.firebasestorage.app",
-  messagingSenderId: "638931947308",
-  appId: "1:638931947308:web:881eb4624e4f2a8b03e689",
-  measurementId: "G-5QNJ38XQLE"
+  apiKey: "AIzaSyCIAoRM5KuCC6beLAAIHZief0wIiZOcu8I",
+  authDomain: "cool-kit-469207-r6.firebaseapp.com",
+  projectId: "cool-kit-469207-r6",
+  storageBucket: "cool-kit-469207-r6.firebasestorage.app",
+  messagingSenderId: "801430687128",
+  appId: "1:801430687128:web:9d5f7cb8bdef44aaa62fed",
+  measurementId: "G-E9T79MNF55"
 };
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db   = getFirestore(app);
+const db   = getFirestore(app, "basicrobotics");
 const provider = new GoogleAuthProvider();
 
 // --- DOM refs (may be null) ---
