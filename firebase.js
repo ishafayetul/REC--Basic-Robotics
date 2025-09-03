@@ -12,15 +12,15 @@ import {
 
 // --- Firebase project config ---
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
-const firebaseConfig = {
-  apiKey: "AIzaSyCIAoRM5KuCC6beLAAIHZief0wIiZOcu8I",
-  authDomain: "cool-kit-469207-r6.firebaseapp.com",
-  projectId: "cool-kit-469207-r6",
-  storageBucket: "cool-kit-469207-r6.firebasestorage.app",
-  messagingSenderId: "801430687128",
-  appId: "1:801430687128:web:9d5f7cb8bdef44aaa62fed",
-  measurementId: "G-E9T79MNF55"
-};
+// const firebaseConfig = {
+//   apiKey: "AIzaSyCIAoRM5KuCC6beLAAIHZief0wIiZOcu8I",
+//   authDomain: "cool-kit-469207-r6.firebaseapp.com",
+//   projectId: "cool-kit-469207-r6",
+//   storageBucket: "cool-kit-469207-r6.firebasestorage.app",
+//   messagingSenderId: "801430687128",
+//   appId: "1:801430687128:web:9d5f7cb8bdef44aaa62fed",
+//   measurementId: "G-E9T79MNF55"
+// };
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
